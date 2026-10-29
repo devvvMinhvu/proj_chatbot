@@ -1,0 +1,30 @@
+{
+  "name": "PhoBERT embeddings + FAISS retrieval",
+  "status": "ok",
+  "index_vectors": 111403,
+  "metadata_count": 111403,
+  "index_load_seconds": 2.5152,
+  "queries": [
+    {
+      "query": "Dự án vệ sinh học đường tại Sơn La đã xây mới bao nhiêu công trình?",
+      "result_count": 5,
+      "latency_seconds": 5.9459,
+      "returned_results": true
+    },
+    {
+      "query": "Các bài báo về trí tuệ nhân tạo và công nghệ",
+      "result_count": 5,
+      "latency_seconds": 0.1113,
+      "returned_results": true
+    },
+    {
+      "query": "Hoạt động bảo vệ môi trường tại Việt Nam",
+      "result_count": 5,
+      "latency_seconds": 0.0518,
+      "returned_results": true
+    }
+  ],
+  "nonempty_query_rate": 1.0,
+  "evaluation_note": "Operational smoke test only. Precision@k, Recall@k, MRR and nDCG require a labelled query-to-relevant-article dataset.",
+  "component": "retrieval"
+}

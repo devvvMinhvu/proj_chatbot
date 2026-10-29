@@ -1,0 +1,56 @@
+
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Secrets and configuration
+.env
+.env.*
+!.env.example
+config/secrets.*
+*credentials*
+*api_key*
+
+# IDE and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# Large models and generated artifacts
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+
+# Local databases and generated vector indexes
+*.db
+*.sqlite
+*.sqlite3
+*.faiss
+*.index
+
+# Python test cache
+.pytest_cache/
+.coverage
+# Large news datasets
+data/*.db
+data/*.jsonl
+
+# Generated vector database
+data/vector_db_15k/
+
+# Downloaded AI models
+models/

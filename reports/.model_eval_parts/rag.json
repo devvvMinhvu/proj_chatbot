@@ -1,0 +1,12 @@
+{
+  "name": "RAG retrieval + Qwen2.5-1.5B generation",
+  "status": "ok",
+  "query": "Dự án vệ sinh học đường tại Sơn La đã xây mới bao nhiêu công trình?",
+  "latency_seconds": 15.9105,
+  "answer_length_chars": 60,
+  "source_count": 3,
+  "answer_preview": "Dự án vệ sinh học đường tại Sơn La đã xây mới 11 công trình.",
+  "expected_fact_11_present": true,
+  "evaluation_note": "Single-question smoke test. The check for '11' is a project-specific heuristic, not a general answer-quality metric. For rigorous evaluation, create labelled QA items with expected answers and source documents.",
+  "component": "rag"
+}

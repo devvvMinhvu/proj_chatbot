@@ -1,0 +1,109 @@
+
+text,intent
+"xin chào",greeting
+"chào bạn",greeting
+"hello",greeting
+"chào chatbot",greeting
+"chào buổi sáng",greeting
+"bạn ơi",greeting
+"xin chào trợ lý đọc báo",greeting
+"chào nhé",greeting
+"hi bạn",greeting
+"rất vui được gặp bạn",greeting
+"bạn là ai",introduction
+"giới thiệu bản thân",introduction
+"giới thiệu chatbot",introduction
+"giới thiệu hệ thống",introduction
+"chức năng của bạn",introduction
+"chatbot làm được gì",introduction
+"trợ lý này giúp được gì",introduction
+"hệ thống sử dụng công nghệ nào",introduction
+"mục đích của trợ lý đọc báo",introduction
+"tôi muốn tìm hiểu về chatbot",introduction
+"tin mới nhất",latest_news
+"tin tức hôm nay",latest_news
+"các bài báo mới nhất",latest_news
+"tin vừa đăng",latest_news
+"tin mới được cập nhật",latest_news
+"xem tin tức mới",latest_news
+"cập nhật tin mới nhất",latest_news
+"liệt kê bài báo mới nhất",latest_news
+"có tin gì mới không",latest_news
+"tin tức gần đây",latest_news
+"tóm tắt bài báo",summarization
+"tóm tắt nội dung",summarization
+"ý chính bài báo",summarization
+"nội dung chính của bài viết",summarization
+"tóm lược bài báo",summarization
+"rút gọn nội dung bài viết",summarization
+"bản tóm tắt ngắn",summarization
+"tóm tắt bài này giúp tôi",summarization
+"hãy nêu những ý chính",summarization
+"tổng hợp nội dung bài báo",summarization
+"toàn văn bài báo",article_detail
+"nội dung đầy đủ bài viết",article_detail
+"xem chi tiết bài báo",article_detail
+"mở bài báo gốc",article_detail
+"đọc toàn bộ bài báo",article_detail
+"hiển thị nội dung bài viết",article_detail
+"cho xem nội dung đầy đủ",article_detail
+"xem bài báo đã tìm thấy",article_detail
+"mở toàn văn bài viết",article_detail
+"thông tin chi tiết của bài báo",article_detail
+"tìm bài báo về AI",semantic_search
+"tìm kiếm tin tức về kinh tế",semantic_search
+"tìm các bài viết về giáo dục",semantic_search
+"tra cứu bài báo về môi trường",semantic_search
+"tìm tin về bóng đá",semantic_search
+"bài báo liên quan đến trí tuệ nhân tạo",semantic_search
+"tìm thông tin báo chí về du lịch",semantic_search
+"các bài viết về biến đổi khí hậu",semantic_search
+"tìm bài báo theo chủ đề y tế",semantic_search
+"có bài báo nào về công nghệ không",semantic_search
+"dự án ở Sơn La xây bao nhiêu công trình",question_answering
+"ai cung cấp thông tin trong bài báo",question_answering
+"sự kiện xảy ra khi nào",question_answering
+"dự án triển khai ở đâu",question_answering
+"nguyên nhân của sự việc là gì",question_answering
+"hoạt động nào được thực hiện",question_answering
+"kết quả của dự án là gì",question_answering
+"tổng kinh phí của dự án bao nhiêu",question_answering
+"ai tham gia hoạt động này",question_answering
+"bài báo cho biết điều gì về sự kiện",question_answering
+"tôi muốn đọc bài báo gốc",article_detail
+"cho tôi đọc toàn bộ bài viết",article_detail
+"hiển thị toàn bộ nội dung bài báo",article_detail
+"tôi muốn xem bài báo đầy đủ",article_detail
+"đọc nội dung gốc của bài báo",article_detail
+
+"Xin chào mọi người",greeting
+"Chào mừng bạn",greeting
+"Chào trợ lý nhé",greeting
+"Chào buổi tối",greeting
+"Chào buổi chiều",greeting
+"Chào buổi trưa",greeting
+"Trợ lý đọc báo này là gì?",introduction
+"Nhiệm vụ chính của bạn là gì?",introduction
+"Hệ thống này hỗ trợ những việc nào?",introduction
+"Tôi muốn biết cách bạn hỗ trợ người đọc",introduction
+"Bạn hỗ trợ đọc báo ra sao?",introduction
+"Liệt kê các tin mới đăng gần đây",latest_news
+"Bài báo nào vừa được đăng?",latest_news
+"Xem danh sách tin được cập nhật",latest_news
+"Tin nào mới đăng hôm nay?",latest_news
+"Các bài viết mới được xuất bản là gì?",latest_news
+"Theo bài báo, nguyên nhân là gì?",question_answering
+"Bài viết nêu ai chịu trách nhiệm?",question_answering
+"Sự việc diễn ra ở địa điểm nào?",question_answering
+"Theo thông tin trong bài, điều gì đã xảy ra?",question_answering
+"Bài báo đưa ra con số nào?",question_answering
+"Tra cứu tin về chính sách năng lượng",semantic_search
+"Cho tôi những bài viết về an ninh mạng",semantic_search
+"Có nội dung nào về thị trường lao động?",semantic_search
+"Tìm các bài báo về nghiên cứu khoa học",semantic_search
+"Tìm tin tức liên quan đến nông nghiệp",semantic_search
+"Tóm gọn bài báo trong vài câu",summarization
+"Hãy viết bản tóm tắt cho nội dung này",summarization
+"Khái quát nội dung của bài viết",summarization
+"Tóm tắt ngắn các thông tin quan trọng",summarization
+"Bài báo này có những điểm nổi bật nào?",summarization

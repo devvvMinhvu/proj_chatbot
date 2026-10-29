@@ -1,0 +1,278 @@
+{
+  "name": "intent_classifier (TF-IDF + MultinomialNB)",
+  "status": "ok",
+  "model_path": "C:\\Users\\DELL\\Desktop\\proj_chatbot\\data\\intent_classifier.joblib",
+  "total_samples": 106,
+  "train_samples": 84,
+  "test_samples": 22,
+  "class_counts": {
+    "article_detail": 15,
+    "greeting": 16,
+    "introduction": 15,
+    "latest_news": 15,
+    "question_answering": 15,
+    "semantic_search": 15,
+    "summarization": 15
+  },
+  "accuracy": 0.9090909090909091,
+  "macro_precision": 0.9285714285714286,
+  "macro_recall": 0.9047619047619049,
+  "macro_f1": 0.9020408163265305,
+  "weighted_f1": 0.9064935064935065,
+  "per_class": {
+    "article_detail": {
+      "precision": 0.75,
+      "recall": 1.0,
+      "f1-score": 0.8571428571428571,
+      "support": 3.0
+    },
+    "greeting": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 4.0
+    },
+    "introduction": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 3.0
+    },
+    "latest_news": {
+      "precision": 0.75,
+      "recall": 1.0,
+      "f1-score": 0.8571428571428571,
+      "support": 3.0
+    },
+    "question_answering": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 3.0
+    },
+    "semantic_search": {
+      "precision": 1.0,
+      "recall": 0.6666666666666666,
+      "f1-score": 0.8,
+      "support": 3.0
+    },
+    "summarization": {
+      "precision": 1.0,
+      "recall": 0.6666666666666666,
+      "f1-score": 0.8,
+      "support": 3.0
+    }
+  },
+  "confusion_matrix": {
+    "labels": [
+      "article_detail",
+      "greeting",
+      "introduction",
+      "latest_news",
+      "question_answering",
+      "semantic_search",
+      "summarization"
+    ],
+    "matrix": [
+      [
+        3,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        4,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        3,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        3,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        3,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        1,
+        0,
+        2,
+        0
+      ],
+      [
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        2
+      ]
+    ]
+  },
+  "test_predictions": [
+    {
+      "text": "dự án ở Sơn La xây bao nhiêu công trình",
+      "actual": "question_answering",
+      "predicted": "question_answering",
+      "correct": true
+    },
+    {
+      "text": "đọc toàn bộ bài báo",
+      "actual": "article_detail",
+      "predicted": "article_detail",
+      "correct": true
+    },
+    {
+      "text": "Khái quát nội dung của bài viết",
+      "actual": "summarization",
+      "predicted": "article_detail",
+      "correct": false
+    },
+    {
+      "text": "xin chào",
+      "actual": "greeting",
+      "predicted": "greeting",
+      "correct": true
+    },
+    {
+      "text": "có tin gì mới không",
+      "actual": "latest_news",
+      "predicted": "latest_news",
+      "correct": true
+    },
+    {
+      "text": "có bài báo nào về công nghệ không",
+      "actual": "semantic_search",
+      "predicted": "semantic_search",
+      "correct": true
+    },
+    {
+      "text": "sự kiện xảy ra khi nào",
+      "actual": "question_answering",
+      "predicted": "question_answering",
+      "correct": true
+    },
+    {
+      "text": "tìm kiếm tin tức về kinh tế",
+      "actual": "semantic_search",
+      "predicted": "latest_news",
+      "correct": false
+    },
+    {
+      "text": "Bài báo đưa ra con số nào?",
+      "actual": "question_answering",
+      "predicted": "question_answering",
+      "correct": true
+    },
+    {
+      "text": "Tôi muốn biết cách bạn hỗ trợ người đọc",
+      "actual": "introduction",
+      "predicted": "introduction",
+      "correct": true
+    },
+    {
+      "text": "Tìm tin tức liên quan đến nông nghiệp",
+      "actual": "semantic_search",
+      "predicted": "semantic_search",
+      "correct": true
+    },
+    {
+      "text": "cho xem nội dung đầy đủ",
+      "actual": "article_detail",
+      "predicted": "article_detail",
+      "correct": true
+    },
+    {
+      "text": "chào buổi sáng",
+      "actual": "greeting",
+      "predicted": "greeting",
+      "correct": true
+    },
+    {
+      "text": "tóm lược bài báo",
+      "actual": "summarization",
+      "predicted": "summarization",
+      "correct": true
+    },
+    {
+      "text": "Bài báo nào vừa được đăng?",
+      "actual": "latest_news",
+      "predicted": "latest_news",
+      "correct": true
+    },
+    {
+      "text": "giới thiệu chatbot",
+      "actual": "introduction",
+      "predicted": "introduction",
+      "correct": true
+    },
+    {
+      "text": "Chào mừng bạn",
+      "actual": "greeting",
+      "predicted": "greeting",
+      "correct": true
+    },
+    {
+      "text": "chào bạn",
+      "actual": "greeting",
+      "predicted": "greeting",
+      "correct": true
+    },
+    {
+      "text": "hiển thị toàn bộ nội dung bài báo",
+      "actual": "article_detail",
+      "predicted": "article_detail",
+      "correct": true
+    },
+    {
+      "text": "Bạn hỗ trợ đọc báo ra sao?",
+      "actual": "introduction",
+      "predicted": "introduction",
+      "correct": true
+    },
+    {
+      "text": "tin vừa đăng",
+      "actual": "latest_news",
+      "predicted": "latest_news",
+      "correct": true
+    },
+    {
+      "text": "tóm tắt nội dung",
+      "actual": "summarization",
+      "predicted": "summarization",
+      "correct": true
+    }
+  ],
+  "evaluation_note": "A fresh stratified holdout was evaluated using a clone of the saved estimator. Small datasets can produce unstable metrics.",
+  "component": "intent"
+}

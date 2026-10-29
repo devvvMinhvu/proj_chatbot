@@ -1,0 +1,114 @@
+{
+  "name": "ViT5 summarization",
+  "status": "ok",
+  "samples_evaluated": 10,
+  "reference_field": "sapo",
+  "mean_latency_seconds": 2.34117,
+  "mean_rouge1_f1": 0.41456740101558587,
+  "mean_rouge2_f1": 0.3033300102544488,
+  "mean_rougeL_f1": 0.34789254764138755,
+  "per_article": [
+    {
+      "title": "TPHCM lại mưa trắng trời",
+      "reference_chars": 142,
+      "summary_chars": 159,
+      "latency_seconds": 2.9472,
+      "rouge1_f1": 0.71875,
+      "rouge2_f1": 0.5483870967741935,
+      "rougeL_f1": 0.6875,
+      "summary_preview": "Mưa lớn bất ngờ trút xuống đúng giờ tan tầm và thời điểm học sinh kết thúc buổi học khiến nhiều người dân TPHCM tấp lề mặc áo mưa , giao thông di chuyển chậm ."
+    },
+    {
+      "title": "4 concert tối nay: Vé bán hết, fan đón thần tượng ra sao?",
+      "reference_chars": 109,
+      "summary_chars": 394,
+      "latency_seconds": 3.1733,
+      "rouge1_f1": 0.4403669724770642,
+      "rouge2_f1": 0.411214953271028,
+      "rougeL_f1": 0.4403669724770642,
+      "summary_preview": "Bốn concert diễn ra trong một tối ở TP. HCM , khán giả háo hức chờ giờ diễn , fan tất bật cổ vũ thần tượng . Đêm diễn đầu tiên của chương trình Giữa một vạn tour diễn ra tại Nhà thi đấu Phú Thọ ( tỉnh Phú Thọ ) với sự tham gia của nhiều nghệ sĩ nổi tiếng . Tối 17-10 , Tiffany Young mang tour quốc tế đến TP. HCM , trình diễn trong đêm nhạc chào mừng 10 năm thành lập Nhóm nhạc K - pop ( FC ) ."
+    },
+    {
+      "title": "Ben Affleck: 'Tôi học nhiều điều từ Jennifer Lopez'",
+      "reference_chars": 131,
+      "summary_chars": 389,
+      "latency_seconds": 2.5298,
+      "rouge1_f1": 0.42857142857142855,
+      "rouge2_f1": 0.34545454545454546,
+      "rougeL_f1": 0.3928571428571429,
+      "summary_preview": "Ben Affleck cho biết sự nỗ lực của vợ cũ - ca sĩ Jennifer Lopez là \" có lẽ là người chăm chỉ nhất anh từng gặp \" . Sau 10 năm chung sống , vợ cũ Jennifer Lopez vẫn làm việc chăm chỉ . Năm 2016 , cô về nước để sinh sống và làm mẹ . Parade , bà xã của nhà văn Liv Constantine . Phương Thảo là nữ diễn viên nổi tiếng và có nhiều vai diễn đáng chú ý trong các bộ phim điện ảnh và truyền hình ."
+    },
+    {
+      "title": "Xe tải chở cá cháy rụi trên cao tốc Phan Thiết - Dầu Giây",
+      "reference_chars": 128,
+      "summary_chars": 152,
+      "latency_seconds": 0.9791,
+      "rouge1_f1": 0.25396825396825395,
+      "rouge2_f1": 0.19672131147540983,
+      "rougeL_f1": 0.22222222222222224,
+      "summary_preview": "Chiếc xe tải chở cá đang chạy trên cao tốc Phan Thiết - Dầu Giây thì bất ngờ bốc cháy dữ dội , tài xế vội tấp xe vào làn dừng khẩn cấp để lửa cháy lớn ."
+    },
+    {
+      "title": "Chủ tịch Vietcombank cam kết giảm tối thiểu 2% lãi suất cho vay",
+      "reference_chars": 148,
+      "summary_chars": 427,
+      "latency_seconds": 2.6183,
+      "rouge1_f1": 0.47540983606557374,
+      "rouge2_f1": 0.4166666666666667,
+      "rougeL_f1": 0.47540983606557374,
+      "summary_preview": "Chủ tịch Vietcombank Nguyễn Thanh Tùng cho biết ngân hàng này cam kết từ nay đến cuối năm sẽ giảm tối thiểu 2 % lãi suất cho vay . Tại phiên thảo luận tổ về kinh tế - xã hội sáng 25-8 , nhiều đại biểu Quốc hội đề xuất thí điểm mô hình ngân hàng số độc lập để giảm chi phí vận hành . Doanh nghiệp không thể tham gia sâu hơn vào chuỗi giá trị , Chủ tịch Quốc hội Trần Thanh Mẫn cho rằng cần thay đổi chính sách cho doanh nghiệp ."
+    },
+    {
+      "title": "Cổ phiếu PNJ xuống gần mức thấp nhất 10 năm",
+      "reference_chars": 135,
+      "summary_chars": 229,
+      "latency_seconds": 1.612,
+      "rouge1_f1": 0.17721518987341772,
+      "rouge2_f1": 0.05194805194805195,
+      "rougeL_f1": 0.12658227848101267,
+      "summary_preview": "Giá cổ phiếu PNJ lao dốc trong đợt điều chỉnh cuối tuần trước , khi nhà đầu tư nước ngoài đẩy mạnh mua cổ phiếu . PNJ tiếp tục cảnh báo về việc thị trường chứng khoán Việt Nam gần đây có xu hướng điều chỉnh và tâm lý thận trọng ."
+    },
+    {
+      "title": "Phó thủ tướng yêu cầu gỡ vướng dự án điện khí LNG 1.500 MW tại Thanh Hóa",
+      "reference_chars": 139,
+      "summary_chars": 287,
+      "latency_seconds": 1.9448,
+      "rouge1_f1": 0.391304347826087,
+      "rouge2_f1": 0.2,
+      "rougeL_f1": 0.2391304347826087,
+      "summary_preview": "Tỉnh Thanh Hoá và chủ đầu tư được giao sớm làm thủ tục , chứng minh năng lực tài chính , phương án triển khai dự án điện LNG Công Thanh . Chiều 5/11 , Phó thủ tướng Phạm Gia Túc đã đến kiểm tra khu kinh tế Nghi Sơn ( Thanh Hoá ) , trước khi cho vận hành nhà máy điện khí LNG Công Thanh ."
+    },
+    {
+      "title": "Sai sót thực hiện Nghị định 178: Lâm Đồng chỉ rõ trách nhiệm 3 nguyên lãnh đạo",
+      "reference_chars": 218,
+      "summary_chars": 346,
+      "latency_seconds": 2.1177,
+      "rouge1_f1": 0.5354330708661418,
+      "rouge2_f1": 0.464,
+      "rougeL_f1": 0.3937007874015748,
+      "summary_preview": "Sau kiến nghị của Kiểm toán Nhà nước , Sở Nội vụ tỉnh Lâm Đồng xác định trách nhiệm của 4 tập thể và 3 cá nhân liên quan đến những tồn tại , hạn chế được Kiểm toán chỉ ra . Ngày 14/8 , tin từ Sở Nội vụ tỉnh Lâm Đồng cho biết , đơn vị này vừa có công văn đề nghị UBND tỉnh và UBND xã Trường Xuân tổ chức kiểm điểm trách nhiệm đối với các cá nhân ."
+    },
+    {
+      "title": "Vinpearl dẫn đầu Top 100 doanh nghiệp được người lao động yêu thích nhất",
+      "reference_chars": 254,
+      "summary_chars": 438,
+      "latency_seconds": 3.0772,
+      "rouge1_f1": 0.3945578231292517,
+      "rouge2_f1": 0.2206896551724138,
+      "rougeL_f1": 0.19047619047619047,
+      "summary_preview": "Vị trí số 1 ở cả bảng xếp hạng khối doanh nghiệp lớn và ngành du lịch - khách sạn năm 2026 tiếp tục nối dài chuỗi thành tích của Vinpearl trên thị trường nhân sự . Ngày 15-4 , Công ty TNHH Thương mại và Du lịch Vinpearl chính thức công bố tài liệu đánh giá cho năm 2017 . Theo đó , Vinpearl vinh dự đạt thương hiệu khách sạn mạnh nhất thế giới với sức mạnh thương hiệu đạt 95,4/100 , xếp hạng AAA+ - mức đánh giá cao nhất trong hệ thống ."
+    },
+    {
+      "title": "Heron Lake Golf Course thắng đội Malaysia ở giải giao hữu",
+      "reference_chars": 155,
+      "summary_chars": 360,
+      "latency_seconds": 2.4123,
+      "rouge1_f1": 0.3300970873786407,
+      "rouge2_f1": 0.1782178217821782,
+      "rougeL_f1": 0.3106796116504854,
+      "summary_preview": "Chiều 27-11 , đội tuyển Heron Lake Golf Course đã giành ngôi vị Best Team của đội tuyển Malaysia sau khi hai đội tranh tài trong một ngày thi đấu tại giải đấu ở Phú Thọ . 16h ngày 27-11 , 44 golfer thuộc câu lạc bộ golf Heron Lake đã giành chiến thắng tại giải thi đấu Inter-Club Team Challenge toàn quốc ở sân số 100/1979 ( Heron Lake Golf Course & Resort ) ."
+    }
+  ],
+  "evaluation_note": "Sapo is used as a proxy reference, not a verified gold summary. ROUGE overlap is useful for comparison but does not fully measure factuality or readability.",
+  "component": "summarization"
+}
