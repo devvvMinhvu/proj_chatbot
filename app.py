@@ -1,48 +1,10 @@
 import streamlit as st
-from database.database_15k import SessionLocal, Article
-from rag.pipeline_15k import ask, load_vector_database
+from rag.pipeline_15k import load_vector_database
 import uuid
-from nlp.text_classifier import predict_category
-from nlp.intent_classifier import predict_intent
+from nlp.intent_handler import get_article_content, handle_intent
 # =========================================
 # 1. CAU HINH GIAO DIEN
 # =========================================
-def get_article_content(article_id=None, url=None):
-    """
-    Lấy toàn văn bài báo từ news_15k.db.
-    Ưu tiên ID gốc, nếu không có thì tìm bằng URL.
-    """
-    db = SessionLocal()
-
-    try:
-        article = None
-
-        if article_id:
-            article = (
-                db.query(Article)
-                .filter(Article.id == str(article_id))
-                .first()
-            )
-
-        if article is None and url:
-            article = (
-                db.query(Article)
-                .filter(Article.url == url)
-                .first()
-            )
-
-        if article is None:
-            return None
-
-        return {
-            "title": article.title or "",
-            "sapo": article.sapo or "",
-            "body": article.body or "",
-        }
-
-    finally:
-        db.close()
-
 def render_sources(sources, message_key,expanded=False):
     if not sources:
         return
@@ -165,8 +127,6 @@ with st.sidebar:
     if st.button("Xóa lịch sử hội thoại"):
         st.session_state.messages = []
         st.rerun()
-
-
 # =========================================
 # 4. LICH SU HOI THOAI
 # =========================================
@@ -219,78 +179,8 @@ for message in st.session_state.messages:
 
 
 # =========================================
-# 5. BO DIEU PHOI Y DINH
-# =========================================
-
-INTRODUCTION_RESPONSE = """Tôi là Trợ lý đọc báo thông minh, hỗ trợ bạn khai thác
-thông tin từ các bài báo tiếng Việt.
-
-Các chức năng chính:
-- Tìm kiếm bài báo theo nội dung bằng PhoBERT và FAISS.
-- Tóm tắt bài báo bằng mô hình ViT5.
-- Hỏi đáp dựa trên bài báo bằng RAG và Qwen.
-- Xem thông tin nguồn và toàn văn bài báo.
-"""
-
-
-@st.cache_resource
-def load_summarizer():
-    """Nạp ViT5 khi cần tóm tắt; giữ mô hình trong bộ nhớ giữa các rerun."""
-    from processing.summerizer import summarize
-    return summarize
-
-
-def process_question(question: str):
-    """Điều phối yêu cầu theo ý định dự đoán."""
-    intent = predict_intent(question)
-    print(f"[INTENT] {intent} | {question}")
-
-    if intent == "greeting":
-        return (
-            "Xin chào! Tôi là Trợ lý đọc báo thông minh. "
-            "Tôi có thể giúp bạn tìm kiếm, tóm tắt và hỏi đáp "
-            "về các bài báo tiếng Việt."
-        ), []
-
-    if intent == "introduction":
-        return INTRODUCTION_RESPONSE, []
-
-    # Các ý định cần dữ liệu bài báo hiện tiếp tục dùng RAG để truy xuất nguồn.
-    result = ask(question)
-    answer = result.get("answer", "Chưa tạo được câu trả lời.")
-    sources = result.get("sources", [])
-
-    # Tóm tắt: dùng RAG để tìm bài báo, sau đó lấy toàn văn trong SQLite
-    # và gọi ViT5 thay vì dùng câu trả lời sinh bởi Qwen làm bản tóm tắt.
-    if intent == "summarization":
-        for source in sources:
-            content = get_article_content(
-                article_id=source.get("article_id"),
-                url=source.get("url"),
-            )
-
-            if not content or not content.get("body", "").strip():
-                continue
-
-            summarize = load_summarizer()
-            summary = summarize(content["body"])
-
-            if summary.strip():
-                title = content.get("title") or source.get("title") or "Bài báo"
-                return f"## Tóm tắt: {title}\n\n{summary}", sources
-
-        return (
-            "Tôi tìm được nguồn liên quan nhưng chưa lấy được toàn văn "
-            "trong cơ sở dữ liệu để tóm tắt. Bạn thử nêu rõ tiêu đề bài báo "
-            "hoặc kiểm tra xem bài báo đã có trường `body` trong database chưa."
-        ), sources
-
-    # Các ý định chưa có nhánh xử lý riêng tiếp tục dùng đáp án RAG.
-    return answer, sources
-
-
-# =========================================
-# 6. O HOI DAP
+# 5. O HOI DAP
+# Logic dieu phoi nam trong nlp/intent_handler.py
 # =========================================
 
 question = st.chat_input("Nhập câu hỏi về các bài báo...")
@@ -309,7 +199,7 @@ if question:
     with st.chat_message("assistant"):
         with st.spinner("Đang xác định ý định, tìm bài báo và xử lý yêu cầu..."):
             try:
-                answer, sources = process_question(question)
+                answer, sources = handle_intent(question)
 
                 assistant_message = {
                     "id": str(uuid.uuid4()),
