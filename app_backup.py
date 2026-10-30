@@ -10,7 +10,7 @@ def render_sources(sources, message_key,expanded=False):
         return
 
     st.markdown("### Nguồn bài báo")
-
+ 
     for i, source in enumerate(sources, start=1):
         title = source.get("title") or "Không có tiêu đề"
         url = source.get("url") or ""

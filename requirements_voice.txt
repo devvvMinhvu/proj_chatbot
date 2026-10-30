@@ -1,0 +1,5 @@
+# Add these lines to the project's existing requirements.txt.
+# st.audio_input() is available from Streamlit 1.41+.
+streamlit>=1.41.0
+SpeechRecognition>=3.17.0
+edge-tts>=6.1.0

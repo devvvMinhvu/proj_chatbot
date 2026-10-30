@@ -8,7 +8,7 @@ from sqlalchemy import (
     Index,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
-
+from sqlalchemy import DateTime
 
 # ==================================================
 # 1. ĐƯỜNG DẪN DATABASE
@@ -61,7 +61,7 @@ class Article(Base):
     url = Column(Text, nullable=True)
     body = Column(Text, nullable=True)
     sapo = Column(Text, nullable=True)
-
+    published_at = Column(DateTime, nullable=True)
     __table_args__ = (
         Index("idx_articles_15k_category", "category"),
         Index("idx_articles_15k_source", "source"),
