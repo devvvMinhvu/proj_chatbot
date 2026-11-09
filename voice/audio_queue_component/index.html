@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      margin: 0;
+      padding: 6px 2px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text-color, #333);
+      background: transparent;
+    }
+    .bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .status { font-size: 13px; opacity: .82; flex: 1 1 180px; }
+    button {
+      border: 1px solid rgba(128,128,128,.55);
+      border-radius: 999px;
+      padding: 7px 14px;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    button.primary { background: #ff4b4b; border-color: #ff4b4b; color: white; }
+    button[hidden] { display: none; }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <span id="status" class="status">Đang chờ âm thanh…</span>
+    <button id="play" class="primary" hidden>▶ Phát / tiếp tục</button>
+  </div>
+
+  <script>
+    (() => {
+      const statusEl = document.getElementById("status");
+      const playButton = document.getElementById("play");
+
+      let currentTaskId = null;
+      let currentArgs = {};
+      let knownIds = new Set();
+      let pending = [];
+      let currentAudio = null;
+      let finishedReported = false;
+      let blocked = false;
+      let totalReceived = 0;
+      let totalPlayed = 0;
+
+      function sendValue(status) {
+        if (!currentTaskId) return;
+        window.parent.postMessage({
+          isStreamlitMessage: true,
+          type: "streamlit:setComponentValue",
+          value: { task_id: currentTaskId, status }
+        }, "*");
+      }
+
+      function setStatus(message) {
+        statusEl.textContent = message;
+        window.parent.postMessage({
+          isStreamlitMessage: true,
+          type: "streamlit:setFrameHeight",
+          height: document.body.scrollHeight
+        }, "*");
+      }
+
+      function reportFinishedIfReady() {
+        if (currentArgs.is_complete && !currentAudio && pending.length === 0 && !finishedReported) {
+          finishedReported = true;
+          playButton.hidden = true;
+          setStatus(`Đã đọc xong ${totalPlayed} phần âm thanh.`);
+          sendValue("finished");
+        }
+      }
+
+      function playNext() {
+        if (currentAudio) return;
+        if (pending.length === 0) {
+          playButton.hidden = true;
+          if (currentArgs.is_complete) {
+            reportFinishedIfReady();
+          } else {
+            setStatus(`Đã phát ${totalPlayed} phần; đang chuẩn bị phần tiếp theo…`);
+          }
+          return;
+        }
+
+        const segment = pending.shift();
+        const audio = new Audio(`data:audio/mpeg;base64,${segment.audio_b64}`);
+        currentAudio = audio;
+        blocked = false;
+        playButton.hidden = true;
+        setStatus(`Đang đọc phần ${totalPlayed + 1}${currentArgs.is_complete ? `/${totalReceived}` : ""}…`);
+
+        audio.onended = () => {
+          currentAudio = null;
+          totalPlayed += 1;
+          playNext();
+        };
+        audio.onerror = () => {
+          currentAudio = null;
+          pending.unshift(segment);
+          blocked = true;
+          playButton.hidden = false;
+          setStatus("Trình duyệt chưa phát được âm thanh. Nhấn Phát / tiếp tục để thử lại.");
+          sendValue("blocked");
+        };
+
+        const playPromise = audio.play();
+        if (playPromise && typeof playPromise.catch === "function") {
+          playPromise.catch(() => {
+            if (currentAudio === audio) currentAudio = null;
+            pending.unshift(segment);
+            blocked = true;
+            playButton.hidden = false;
+              setStatus("Trình duyệt chặn tự động phát. Nhấn Phát / tiếp tục để nghe.");
+            sendValue("blocked");
+          });
+        }
+      }
+
+      function receiveRender(args) {
+        if (args.task_id !== currentTaskId) {
+          if (currentAudio) {
+            currentAudio.pause();
+            currentAudio = null;
+          }
+          currentTaskId = args.task_id;
+          knownIds = new Set();
+          pending = [];
+          finishedReported = false;
+          blocked = false;
+          totalReceived = 0;
+          totalPlayed = 0;
+        }
+
+        currentArgs = args;
+        const segments = Array.isArray(args.segments) ? args.segments : [];
+        for (const segment of segments) {
+          if (!segment || !segment.id || !segment.audio_b64 || knownIds.has(segment.id)) continue;
+          knownIds.add(segment.id);
+          pending.push(segment);
+          totalReceived += 1;
+        }
+
+        playButton.hidden = true;
+        if (args.autoplay && !blocked) {
+          playNext();
+        } else if (pending.length > 0) {
+          playButton.hidden = false;
+          setStatus(`Đã sẵn sàng ${totalPlayed}/${totalReceived} phần âm thanh.`);
+        } else {
+          setStatus(args.is_complete ? `Đã đọc xong ${totalPlayed} phần âm thanh.` : "Đang chuẩn bị âm thanh…");
+          reportFinishedIfReady();
+        }
+      }
+
+      playButton.addEventListener("click", () => {
+        blocked = false;
+        playNext();
+      });
+
+
+
+      window.addEventListener("message", (event) => {
+        const data = event.data || {};
+        if (data.type === "streamlit:render") {
+          receiveRender(data.args || {});
+        }
+      });
+
+      window.parent.postMessage({
+        isStreamlitMessage: true,
+        type: "streamlit:componentReady",
+        apiVersion: 1
+      }, "*");
+      window.parent.postMessage({
+        isStreamlitMessage: true,
+        type: "streamlit:setFrameHeight",
+        height: document.body.scrollHeight
+      }, "*");
+    })();
+  </script>
+</body>
+</html>

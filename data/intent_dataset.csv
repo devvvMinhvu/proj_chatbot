@@ -1,109 +1,162 @@
-
 text,intent
-"xin chào",greeting
-"chào bạn",greeting
-"hello",greeting
-"chào chatbot",greeting
-"chào buổi sáng",greeting
-"bạn ơi",greeting
-"xin chào trợ lý đọc báo",greeting
-"chào nhé",greeting
-"hi bạn",greeting
-"rất vui được gặp bạn",greeting
-"bạn là ai",introduction
-"giới thiệu bản thân",introduction
-"giới thiệu chatbot",introduction
-"giới thiệu hệ thống",introduction
-"chức năng của bạn",introduction
-"chatbot làm được gì",introduction
-"trợ lý này giúp được gì",introduction
-"hệ thống sử dụng công nghệ nào",introduction
-"mục đích của trợ lý đọc báo",introduction
-"tôi muốn tìm hiểu về chatbot",introduction
-"tin mới nhất",latest_news
-"tin tức hôm nay",latest_news
-"các bài báo mới nhất",latest_news
-"tin vừa đăng",latest_news
-"tin mới được cập nhật",latest_news
-"xem tin tức mới",latest_news
-"cập nhật tin mới nhất",latest_news
-"liệt kê bài báo mới nhất",latest_news
-"có tin gì mới không",latest_news
-"tin tức gần đây",latest_news
-"tóm tắt bài báo",summarization
-"tóm tắt nội dung",summarization
-"ý chính bài báo",summarization
-"nội dung chính của bài viết",summarization
-"tóm lược bài báo",summarization
-"rút gọn nội dung bài viết",summarization
-"bản tóm tắt ngắn",summarization
-"tóm tắt bài này giúp tôi",summarization
-"hãy nêu những ý chính",summarization
-"tổng hợp nội dung bài báo",summarization
-"toàn văn bài báo",article_detail
-"nội dung đầy đủ bài viết",article_detail
-"xem chi tiết bài báo",article_detail
-"mở bài báo gốc",article_detail
-"đọc toàn bộ bài báo",article_detail
-"hiển thị nội dung bài viết",article_detail
-"cho xem nội dung đầy đủ",article_detail
-"xem bài báo đã tìm thấy",article_detail
-"mở toàn văn bài viết",article_detail
-"thông tin chi tiết của bài báo",article_detail
-"tìm bài báo về AI",semantic_search
-"tìm kiếm tin tức về kinh tế",semantic_search
-"tìm các bài viết về giáo dục",semantic_search
-"tra cứu bài báo về môi trường",semantic_search
-"tìm tin về bóng đá",semantic_search
-"bài báo liên quan đến trí tuệ nhân tạo",semantic_search
-"tìm thông tin báo chí về du lịch",semantic_search
-"các bài viết về biến đổi khí hậu",semantic_search
-"tìm bài báo theo chủ đề y tế",semantic_search
-"có bài báo nào về công nghệ không",semantic_search
-"dự án ở Sơn La xây bao nhiêu công trình",question_answering
-"ai cung cấp thông tin trong bài báo",question_answering
-"sự kiện xảy ra khi nào",question_answering
-"dự án triển khai ở đâu",question_answering
-"nguyên nhân của sự việc là gì",question_answering
-"hoạt động nào được thực hiện",question_answering
-"kết quả của dự án là gì",question_answering
-"tổng kinh phí của dự án bao nhiêu",question_answering
-"ai tham gia hoạt động này",question_answering
-"bài báo cho biết điều gì về sự kiện",question_answering
-"tôi muốn đọc bài báo gốc",article_detail
-"cho tôi đọc toàn bộ bài viết",article_detail
-"hiển thị toàn bộ nội dung bài báo",article_detail
-"tôi muốn xem bài báo đầy đủ",article_detail
-"đọc nội dung gốc của bài báo",article_detail
-
-"Xin chào mọi người",greeting
-"Chào mừng bạn",greeting
-"Chào trợ lý nhé",greeting
-"Chào buổi tối",greeting
-"Chào buổi chiều",greeting
-"Chào buổi trưa",greeting
-"Trợ lý đọc báo này là gì?",introduction
-"Nhiệm vụ chính của bạn là gì?",introduction
-"Hệ thống này hỗ trợ những việc nào?",introduction
-"Tôi muốn biết cách bạn hỗ trợ người đọc",introduction
-"Bạn hỗ trợ đọc báo ra sao?",introduction
-"Liệt kê các tin mới đăng gần đây",latest_news
-"Bài báo nào vừa được đăng?",latest_news
-"Xem danh sách tin được cập nhật",latest_news
-"Tin nào mới đăng hôm nay?",latest_news
-"Các bài viết mới được xuất bản là gì?",latest_news
+xin chào,greeting
+chào bạn,greeting
+hello,greeting
+chào chatbot,greeting
+chào buổi sáng,greeting
+bạn ơi,greeting
+xin chào trợ lý đọc báo,greeting
+chào nhé,greeting
+hi bạn,greeting
+rất vui được gặp bạn,greeting
+bạn là ai,introduction
+giới thiệu bản thân,introduction
+giới thiệu chatbot,introduction
+giới thiệu hệ thống,introduction
+chức năng của bạn,introduction
+chatbot làm được gì,introduction
+trợ lý này giúp được gì,introduction
+hệ thống sử dụng công nghệ nào,introduction
+mục đích của trợ lý đọc báo,introduction
+tôi muốn tìm hiểu về chatbot,introduction
+tin mới nhất,latest_news
+tin tức hôm nay,latest_news
+các bài báo mới nhất,latest_news
+tin vừa đăng,latest_news
+tin mới được cập nhật,latest_news
+xem tin tức mới,latest_news
+cập nhật tin mới nhất,latest_news
+liệt kê bài báo mới nhất,latest_news
+có tin gì mới không,latest_news
+tin tức gần đây,latest_news
+tóm tắt bài báo,summarization
+tóm tắt nội dung,summarization
+ý chính bài báo,summarization
+nội dung chính của bài viết,summarization
+tóm lược bài báo,summarization
+rút gọn nội dung bài viết,summarization
+bản tóm tắt ngắn,summarization
+tóm tắt bài này giúp tôi,summarization
+hãy nêu những ý chính,summarization
+tổng hợp nội dung bài báo,summarization
+toàn văn bài báo,article_detail
+nội dung đầy đủ bài viết,article_detail
+xem chi tiết bài báo,article_detail
+mở bài báo gốc,article_detail
+đọc toàn bộ bài báo,article_detail
+hiển thị nội dung bài viết,article_detail
+cho xem nội dung đầy đủ,article_detail
+xem bài báo đã tìm thấy,article_detail
+mở toàn văn bài viết,article_detail
+thông tin chi tiết của bài báo,article_detail
+tìm bài báo về AI,semantic_search
+tìm kiếm tin tức về kinh tế,semantic_search
+tìm các bài viết về giáo dục,semantic_search
+tra cứu bài báo về môi trường,semantic_search
+tìm tin về bóng đá,semantic_search
+bài báo liên quan đến trí tuệ nhân tạo,semantic_search
+tìm thông tin báo chí về du lịch,semantic_search
+các bài viết về biến đổi khí hậu,semantic_search
+tìm bài báo theo chủ đề y tế,topic_search
+có bài báo nào về công nghệ không,semantic_search
+dự án ở Sơn La xây bao nhiêu công trình,question_answering
+ai cung cấp thông tin trong bài báo,question_answering
+sự kiện xảy ra khi nào,question_answering
+dự án triển khai ở đâu,question_answering
+nguyên nhân của sự việc là gì,question_answering
+hoạt động nào được thực hiện,question_answering
+kết quả của dự án là gì,question_answering
+tổng kinh phí của dự án bao nhiêu,question_answering
+ai tham gia hoạt động này,question_answering
+bài báo cho biết điều gì về sự kiện,question_answering
+tôi muốn đọc bài báo gốc,article_detail
+cho tôi đọc toàn bộ bài viết,article_detail
+hiển thị toàn bộ nội dung bài báo,article_detail
+tôi muốn xem bài báo đầy đủ,article_detail
+đọc nội dung gốc của bài báo,article_detail
+Xin chào mọi người,greeting
+Chào mừng bạn,greeting
+Chào trợ lý nhé,greeting
+Chào buổi tối,greeting
+Chào buổi chiều,greeting
+Chào buổi trưa,greeting
+Trợ lý đọc báo này là gì?,introduction
+Nhiệm vụ chính của bạn là gì?,introduction
+Hệ thống này hỗ trợ những việc nào?,introduction
+Tôi muốn biết cách bạn hỗ trợ người đọc,introduction
+Bạn hỗ trợ đọc báo ra sao?,introduction
+Liệt kê các tin mới đăng gần đây,latest_news
+Bài báo nào vừa được đăng?,latest_news
+Xem danh sách tin được cập nhật,latest_news
+Tin nào mới đăng hôm nay?,latest_news
+Các bài viết mới được xuất bản là gì?,latest_news
 "Theo bài báo, nguyên nhân là gì?",question_answering
-"Bài viết nêu ai chịu trách nhiệm?",question_answering
-"Sự việc diễn ra ở địa điểm nào?",question_answering
+Bài viết nêu ai chịu trách nhiệm?,question_answering
+Sự việc diễn ra ở địa điểm nào?,question_answering
 "Theo thông tin trong bài, điều gì đã xảy ra?",question_answering
-"Bài báo đưa ra con số nào?",question_answering
-"Tra cứu tin về chính sách năng lượng",semantic_search
-"Cho tôi những bài viết về an ninh mạng",semantic_search
-"Có nội dung nào về thị trường lao động?",semantic_search
-"Tìm các bài báo về nghiên cứu khoa học",semantic_search
-"Tìm tin tức liên quan đến nông nghiệp",semantic_search
-"Tóm gọn bài báo trong vài câu",summarization
-"Hãy viết bản tóm tắt cho nội dung này",summarization
-"Khái quát nội dung của bài viết",summarization
-"Tóm tắt ngắn các thông tin quan trọng",summarization
-"Bài báo này có những điểm nổi bật nào?",summarization
+Bài báo đưa ra con số nào?,question_answering
+Tra cứu tin về chính sách năng lượng,semantic_search
+Cho tôi những bài viết về an ninh mạng,semantic_search
+Có nội dung nào về thị trường lao động?,semantic_search
+Tìm các bài báo về nghiên cứu khoa học,semantic_search
+Tìm tin tức liên quan đến nông nghiệp,semantic_search
+Tóm gọn bài báo trong vài câu,summarization
+Hãy viết bản tóm tắt cho nội dung này,summarization
+Khái quát nội dung của bài viết,summarization
+Tóm tắt ngắn các thông tin quan trọng,summarization
+Bài báo này có những điểm nổi bật nào?,summarization
+Liệt kê bài báo thuộc chuyên mục kinh tế,topic_search
+Hiển thị bài viết trong danh mục thể thao,topic_search
+Cho tôi danh sách tin ở chuyên mục công nghệ,topic_search
+Lọc bài báo theo danh mục giáo dục,topic_search
+Mở chuyên mục du lịch và xem các bài viết,topic_search
+Có bài báo nào thuộc lĩnh vực y tế,topic_search
+Chỉ lấy tin trong mục giải trí,topic_search
+Truy vấn bài báo theo chuyên mục môi trường,topic_search
+Xem tất cả bài viết của chuyên mục chính trị,topic_search
+Cho xem các bài thuộc danh mục thời sự,topic_search
+Tìm các bài báo nằm trong chuyên mục pháp luật,topic_search
+Xem danh sách bài thuộc chuyên mục văn hóa,topic_search
+Hiển thị các bài thuộc lĩnh vực xã hội,topic_search
+Cho tôi xem những tin trong danh mục thế giới,topic_search
+Lọc danh sách bài viết theo chuyên mục kinh tế,topic_search
+Tìm bài viết phân tích nguyên nhân giá vàng tăng,semantic_search
+Tìm các bài báo về biện pháp giảm thiểu ô nhiễm nhựa đại dương,semantic_search
+Tìm bài báo về giá vàng mới nhất,latest_topic_search
+Tìm bài báo về Quốc hội mới nhất,latest_topic_search
+Cho tôi xem tin mới nhất về giá xăng,latest_topic_search
+Các bài viết mới nhất liên quan đến thị trường bất động sản,latest_topic_search
+Tin tức mới nhất về trí tuệ nhân tạo,latest_topic_search
+Tìm bài báo gần đây về biến đổi khí hậu,latest_topic_search
+Có bài báo mới nào về bóng đá không,latest_topic_search
+Cập nhật mới nhất về giáo dục,latest_topic_search
+Cho xem bài báo mới đăng về ngân hàng,latest_topic_search
+Tìm các tin vừa cập nhật về thị trường chứng khoán,latest_topic_search
+Tôi muốn đọc bài mới nhất nói về lãi suất,latest_topic_search
+Tìm tin mới về tình hình Biển Đông,latest_topic_search
+Những bài báo mới nhất về chính phủ,latest_topic_search
+Bài viết gần đây nhất về giá vàng trong nước,latest_topic_search
+Tìm tin tức về xuất khẩu mới nhất,latest_topic_search
+Hiển thị các bài báo mới nhất nhắc đến Quốc hội,latest_topic_search
+Find the latest articles about gold prices,latest_topic_search
+Show me recent news about the National Assembly,latest_topic_search
+Tìm bài mới nhất về công nghệ bán dẫn,latest_topic_search
+Bài báo mới nhất về tình hình kinh tế Việt Nam,latest_topic_search
+Tìm bài báo về chính sách tiền tệ,semantic_search
+Tra cứu thông tin về luật giao thông trên báo chí,semantic_search
+Có bài nào nói về diễn biến thị trường chứng khoán không,semantic_search
+Tìm bài viết liên quan đến an toàn dữ liệu,semantic_search
+Tôi cần các bài báo về biến động tỷ giá,semantic_search
+Xem những nội dung về hoạt động Quốc hội,semantic_search
+Cho tôi bài viết về phát triển năng lượng tái tạo,semantic_search
+Tìm hiểu thông tin báo chí về giá vàng,semantic_search
+Các bài viết phân tích tình trạng thất nghiệp,semantic_search
+Tìm báo về tình hình ngành du lịch,semantic_search
+Cho tôi xem các tin nổi bật mới cập nhật,latest_news
+Tổng hợp tin tức mới nhất,latest_news
+Danh sách những tin mới trong ngày,latest_news
+Có sự kiện nào mới được đăng không,latest_news
+Mở mục tin mới cập nhật,latest_news
+Đọc các tin vừa xuất bản,latest_news
+Tin tức được cập nhật gần đây,latest_news
+Xem những bài mới được đăng hôm nay,latest_news
