@@ -54,3 +54,11 @@ data/vector_db_15k/
 
 # Downloaded AI models
 models/
+# Old vector database (built from news.db)
+data/vector_db_v2/
+
+# Large trained models (rebuild with: python -m nlp.text_classifier)
+data/text_classifier_15k.joblib
+
+# Generated evaluation reports (rebuild with: python evaluate_all_models.py)
+reports/

@@ -1,0 +1,39 @@
+# Direct dependencies of proj_chatbot.
+# Versions match the environment used to train the saved .joblib models;
+# keep scikit-learn/joblib pinned so those models load correctly.
+#
+# GPU (optional): install torch first from the CUDA index, then this file:
+#   pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cu118
+#   pip install -r requirements.txt
+
+# --- Web app ---
+streamlit==1.66.1
+
+# --- Data / database ---
+numpy==2.5.2
+pandas==3.0.5
+SQLAlchemy==2.0.52
+
+# --- Classical ML (intent + category classifiers) ---
+scikit-learn==1.9.0
+joblib==1.5.3
+
+# --- Embeddings, summarization, vector search ---
+torch==2.7.1
+transformers==4.52.3
+sentencepiece==0.2.2
+faiss-cpu==1.15.0
+
+# --- LLM (Qwen2.5 via a local Ollama server) ---
+ollama==0.6.3
+
+# --- Crawler / published_at backfill ---
+requests==2.34.2
+beautifulsoup4==4.15.0
+python-dateutil==2.9.0.post0
+
+# --- Voice (app_voice.py, app_voice_continuous.py) ---
+SpeechRecognition>=3.10.0
+edge-tts>=6.1.0
+streamlit-webrtc>=0.47.9
+av>=12.0.0
