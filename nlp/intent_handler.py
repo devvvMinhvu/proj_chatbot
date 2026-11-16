@@ -656,6 +656,23 @@ def _format_latest_news(articles, total_count: int, dated_count: int) -> str:
         )
     return "\n\n".join(lines)
 
+
+
+def _has_summarization_cue(question: str) -> bool:
+    """Nhận biết yêu cầu tóm tắt nội dung bài báo."""
+    normalized_question = f" {_normalize_label(question)} "
+
+    cues = (
+        "tom tat",
+        "tom luoc",
+        "rut gon noi dung",
+        "tom tat noi dung",
+        "summary",
+        "summarize",
+    )
+
+    return any(f" {cue} " in normalized_question for cue in cues)
+
 def handle_intent(question: str) -> tuple[str, list[dict[str, Any]]]:
     """Du doan y dinh va dieu phoi toi chuc nang phu hop."""
     if not question or not question.strip():
@@ -663,22 +680,30 @@ def handle_intent(question: str) -> tuple[str, list[dict[str, Any]]]:
 
     intent = predict_intent(question)
 
-    # Yêu cầu ghi rõ chuyên mục được ưu tiên trước; nhánh topic_search
-    # cũng sắp xếp theo published_at nên có thể xử lý cả "chuyên mục X mới nhất".
-    detected_topic = _extract_topic(question)
-    if detected_topic and _has_topic_search_cue(question):
+    # 1. Ưu tiên nhận diện yêu cầu tóm tắt
+    if _has_summarization_cue(question):
+        intent = "summarization"
+
+    # 2. Yêu cầu tìm bài theo chuyên mục
+    elif (
+        _extract_topic(question)
+        and _has_topic_search_cue(question)
+    ):
         intent = "topic_search"
-    # Nếu có dấu hiệu thời gian và vẫn còn từ khóa nội dung, đây là tìm
-    # bài mới nhất theo một chủ đề cụ thể, không phải tin mới nhất nói chung.
+
+    # 3. Yêu cầu tìm tin mới nhất
     elif _has_latest_cue(question):
         intent = (
             "latest_topic_search"
             if _extract_latest_topic_terms(question)
             else "latest_news"
         )
+
+    # 4. Không có dấu hiệu thời gian thì tìm kiếm ngữ nghĩa
     elif intent == "latest_topic_search":
-        # Không có mốc thời gian thì đây là semantic_search thông thường.
         intent = "semantic_search"
+
+   
 
     print(f"[INTENT] {intent} | {question}")
 
@@ -761,7 +786,35 @@ def handle_intent(question: str) -> tuple[str, list[dict[str, Any]]]:
             return f"## {title}\n\n{body}", [selected_source]
 
         # summarization: chi nap ViT5 neu da tim thay bai co body.
-        summary = _load_summarizer()(content["body"])
+        # summary = _load_summarizer()(content["body"])
+        body = (content.get("body") or "").strip()
+
+        print("\n========== SUMMARY DEBUG ==========")
+        print(f"[SUMMARY] Title: {title}")
+        print(f"[SUMMARY] Source: {source}")
+        print(f"[SUMMARY] Body length: {len(body)}")
+        print(f"[SUMMARY] Body preview:\n{body[:1200]}")
+
+        print("[SUMMARY] Kiểm tra từ khóa:")
+        for keyword in [
+            "128 năm",
+            "Nguyễn Xuân Phúc",
+            "30-4-2024",
+            "Boston Areti AI",
+            "VKAI"
+        ]:
+            print(f"  {keyword}: {keyword.lower() in body.lower()}")
+
+        print("===================================\n")
+
+        if not body:
+            return _empty_retrieval_message(intent), [selected_source]
+
+        summary = _load_summarizer()(body)
+
+        print("\n========== GENERATED SUMMARY ==========")
+        print(summary)
+        print("=======================================\n")
         if not summary or not summary.strip():
             return "Mô hình ViT5 chưa tạo được bản tóm tắt.", [selected_source]
         return f"## Tóm tắt: {title}\n\n{summary.strip()}", [selected_source]

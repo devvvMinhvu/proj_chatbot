@@ -1,4 +1,4 @@
-text,intent
+﻿text,intent
 xin chào,greeting
 chào bạn,greeting
 hello,greeting
@@ -160,3 +160,292 @@ Mở mục tin mới cập nhật,latest_news
 Đọc các tin vừa xuất bản,latest_news
 Tin tức được cập nhật gần đây,latest_news
 Xem những bài mới được đăng hôm nay,latest_news
+"A lô, trợ lý có nghe không?",greeting
+Chào trợ lý đọc báo!,greeting
+"Xin chào, tôi đang cần một chút trợ giúp.",greeting
+Chào bạn nhé.,greeting
+"Hello, trợ lý ơi.",greeting
+Alo bạn ơi.,greeting
+"Chào buổi sáng, hôm nay bạn thế nào?",greeting
+"Chào buổi tối, bạn còn hoạt động chứ?",greeting
+Mình chào bạn.,greeting
+Rất vui được trò chuyện với bạn.,greeting
+Xin gửi lời chào đến trợ lý.,greeting
+"Chào, chúng ta bắt đầu nhé.",greeting
+"Bạn ơi, xin chào!",greeting
+"Hi, có ai ở đó không?",greeting
+Chúc bạn một ngày tốt lành.,greeting
+Chào buổi trưa nhé trợ lý.,greeting
+"Xin chào, tôi quay lại rồi đây.",greeting
+"Này trợ lý, chào bạn.",greeting
+"Chào nhé, rất vui được gặp bạn.",greeting
+"Xin chào mọi người, bắt đầu thôi.",greeting
+Bạn có ở đây không? Chào bạn.,greeting
+"Chào trợ lý, nghe tôi nói không?",greeting
+Xin chào bạn đồng hành.,greeting
+Chào buổi sáng mọi người.,greeting
+"Hello, mình muốn trò chuyện một chút.",greeting
+"Chào bạn, hôm nay ổn chứ?",greeting
+"Trợ lý ơi, mình chào nhé.",greeting
+Xin chào và rất vui được gặp bạn.,greeting
+"A lô, bắt đầu được chưa?",greeting
+"Chào bạn, tôi đã sẵn sàng.",greeting
+Chào trợ lý thông minh.,greeting
+"Hi bạn, rất vui được làm quen.",greeting
+"Chào buổi chiều, trợ lý nhé.",greeting
+"Xin chào, chúng ta cùng làm việc nào.",greeting
+Bạn có thể làm được những việc gì?,introduction
+Hãy nói cho tôi biết các chức năng của bạn.,introduction
+Trợ lý đọc báo này hỗ trợ người dùng ra sao?,introduction
+Tôi muốn biết bạn có thể giúp ích như thế nào.,introduction
+Bạn được xây dựng để giải quyết nhiệm vụ gì?,introduction
+Hệ thống này có những tính năng chính nào?,introduction
+Bạn có thể tìm kiếm và xử lý thông tin báo chí không?,introduction
+Hãy giới thiệu ngắn gọn về trợ lý này.,introduction
+Tôi có thể sử dụng bạn để làm gì với các bài báo?,introduction
+Bạn hỗ trợ người đọc tiếp cận tin tức bằng cách nào?,introduction
+Công nghệ nào được sử dụng trong hệ thống này?,introduction
+Bạn có thể tóm tắt nội dung báo không?,introduction
+Bạn có khả năng trả lời câu hỏi dựa trên bài báo chứ?,introduction
+Nguồn dữ liệu của trợ lý đọc báo được dùng như thế nào?,introduction
+Hãy mô tả quy trình hoạt động của bạn.,introduction
+Tôi muốn tìm hiểu tổng quan về hệ thống.,introduction
+Trợ lý này khác gì so với việc tìm kiếm báo thông thường?,introduction
+Bạn có thể hỗ trợ những thao tác nào khi đọc tin?,introduction
+Mục tiêu xây dựng chatbot đọc báo là gì?,introduction
+Hệ thống có thể tìm bài theo nội dung hay chỉ theo chuyên mục?,introduction
+Bạn sử dụng những mô hình AI nào?,introduction
+Bạn có chức năng đọc toàn văn và tóm tắt bài viết không?,introduction
+Hãy giải thích những việc tôi có thể yêu cầu bạn thực hiện.,introduction
+Đây là chatbot thuộc lĩnh vực nào?,introduction
+Tôi muốn biết phạm vi hỗ trợ của trợ lý.,introduction
+Bạn được thiết kế dành cho đối tượng người dùng nào?,introduction
+Trợ lý có thể giúp tôi khai thác thông tin từ báo chí không?,introduction
+"Hệ thống có các chức năng tìm kiếm, tóm tắt và hỏi đáp phải không?",introduction
+Bạn có thể trình bày cách sử dụng trợ lý này không?,introduction
+Hãy cho tôi biết nhiệm vụ của hệ thống đọc báo thông minh.,introduction
+Trợ lý này xử lý các bài báo tiếng Việt như thế nào?,introduction
+Tôi muốn nghe phần giới thiệu về ứng dụng.,introduction
+Bạn là một công cụ hỗ trợ đọc báo hay chatbot hỏi đáp?,introduction
+Có thể giới thiệu những điểm nổi bật của hệ thống không?,introduction
+Bạn có thể nói rõ mình hỗ trợ người đọc báo như thế nào không?,introduction
+Cho tôi xem 10 tin vừa được đăng.,latest_news
+Hôm nay có những bài báo nào mới?,latest_news
+Cập nhật danh sách tin tức mới đăng cho tôi.,latest_news
+Tôi muốn biết các thông tin báo chí mới nhất.,latest_news
+Hiện có những tin tức nào đáng chú ý vừa xuất hiện?,latest_news
+Đưa ra các bài viết được xuất bản gần đây.,latest_news
+Mở danh sách tin tức mới cập nhật nhất.,latest_news
+Trong ngày hôm nay có tin gì mới?,latest_news
+Cho xem các bài báo mới lên trang.,latest_news
+Tôi muốn đọc những tin mới được đăng gần đây.,latest_news
+Hãy lấy danh sách bài viết mới nhất trong cơ sở dữ liệu.,latest_news
+Có bài báo nào vừa được xuất bản không?,latest_news
+Tin tức mới trong ngày gồm những gì?,latest_news
+Liệt kê những bài báo được cập nhật gần đây nhất.,latest_news
+Cho tôi biết các sự kiện mới được báo chí đăng tải.,latest_news
+Tôi cần xem bảng tin mới nhất.,latest_news
+Hiển thị 5 tin mới đăng gần đây.,latest_news
+Những bài viết nào mới được đưa lên hệ thống?,latest_news
+"Tìm danh sách tin mới, không giới hạn lĩnh vực.",latest_news
+Cho tôi cập nhật tình hình tin tức hiện tại.,latest_news
+Các bản tin mới nhất đang có trên hệ thống là gì?,latest_news
+Tổng hợp những bài báo vừa xuất bản.,latest_news
+Mở các tin tức được đăng trong thời gian gần đây.,latest_news
+Tôi muốn xem tin mới nhất từ các nguồn báo.,latest_news
+Có thông tin mới nào được cập nhật hôm nay không?,latest_news
+Hãy hiển thị các tin vừa được hệ thống thu thập.,latest_news
+Cho xem những bài báo mới nhất bất kể chủ đề.,latest_news
+Giá vàng hôm nay có tin mới nào?,latest_topic_search
+Tìm các bài mới đăng về thị trường chứng khoán.,latest_topic_search
+Cho tôi biết tin gần đây về tình hình Quốc hội.,latest_topic_search
+Có cập nhật mới nào về giá xăng không?,latest_topic_search
+Những bài báo mới nhất về trí tuệ nhân tạo là gì?,latest_topic_search
+Tìm tin vừa đăng liên quan đến lãi suất ngân hàng.,latest_topic_search
+Cập nhật các bài gần đây về bất động sản.,latest_topic_search
+Cho xem tin mới về đội tuyển bóng đá Việt Nam.,latest_topic_search
+Bài viết mới nhất nói về biến đổi khí hậu là bài nào?,latest_topic_search
+Tìm các tin vừa cập nhật về ngành du lịch.,latest_topic_search
+Gần đây báo chí có tin gì về xuất khẩu gạo?,latest_topic_search
+Tôi cần bài mới đăng về chính sách giáo dục.,latest_topic_search
+Có tin mới nhất nào về thị trường lao động không?,latest_topic_search
+Tìm bài báo hôm nay nhắc đến giá vàng thế giới.,latest_topic_search
+Cho tôi xem cập nhật mới về tình hình Biển Đông.,latest_topic_search
+Tin tức gần đây về ngành ngân hàng gồm những bài nào?,latest_topic_search
+Tìm các bài mới nhất liên quan đến công nghệ bán dẫn.,latest_topic_search
+Báo chí vừa đăng thông tin gì về giải ngân đầu tư công?,latest_topic_search
+Hiển thị tin mới về ô nhiễm không khí.,latest_topic_search
+Có bài mới nào về kỳ thi tốt nghiệp năm nay?,latest_topic_search
+Tìm những bài vừa xuất bản về năng lượng tái tạo.,latest_topic_search
+Cho tôi tin mới nhất về hoạt động của Chính phủ.,latest_topic_search
+Cập nhật bài báo gần đây nói về giá điện.,latest_topic_search
+Tìm tin mới đăng về an ninh mạng.,latest_topic_search
+Các bài viết gần đây về chính sách tiền tệ là gì?,latest_topic_search
+Cho xem tin mới về ngành ô tô Việt Nam.,latest_topic_search
+Tìm bài báo vừa cập nhật về dịch bệnh.,latest_topic_search
+Có thông tin mới nào về thị trường việc làm?,latest_topic_search
+Hiển thị những bài mới nhất về quan hệ quốc tế.,latest_topic_search
+Tôi muốn đọc tin mới về phát triển đường sắt.,latest_topic_search
+"Theo bài báo, ai là người phát biểu tại sự kiện?",question_answering
+Bài viết cho biết dự án bắt đầu vào thời điểm nào?,question_answering
+Địa phương nào được nhắc đến trong thông tin này?,question_answering
+"Theo nội dung bài báo, vấn đề chính đang được đề cập là gì?",question_answering
+Đơn vị nào chịu trách nhiệm triển khai dự án?,question_answering
+Bài báo nêu tổng số người tham gia là bao nhiêu?,question_answering
+Sự kiện này diễn ra trong bao lâu?,question_answering
+Vì sao hoạt động đó được tổ chức?,question_answering
+Kết quả cụ thể được công bố trong bài là gì?,question_answering
+"Theo bài viết, giải pháp nào đã được đưa ra?",question_answering
+Ai là đối tượng được hưởng lợi từ chương trình?,question_answering
+Dự án được thực hiện tại tỉnh hoặc thành phố nào?,question_answering
+Bài báo đề cập đến những cơ quan nào?,question_answering
+Số vốn đầu tư được bài viết công bố là bao nhiêu?,question_answering
+Mục tiêu của chương trình được nêu trong bài là gì?,question_answering
+"Theo thông tin bài báo, nguyên nhân dẫn đến sự việc là gì?",question_answering
+Những bên nào tham gia ký kết thỏa thuận?,question_answering
+Bài viết cho biết sản phẩm được xuất khẩu đến đâu?,question_answering
+Thời hạn hoàn thành dự án là khi nào?,question_answering
+Ai đã đưa ra nhận định trong bài báo?,question_answering
+Con số thống kê nào được nhắc đến trong bài?,question_answering
+Hoạt động này mang lại kết quả gì?,question_answering
+"Theo bài báo, khó khăn lớn nhất hiện nay là gì?",question_answering
+Sự việc được mô tả xảy ra ở đâu?,question_answering
+Bài viết nói gì về kế hoạch trong thời gian tới?,question_answering
+Cơ quan chức năng đã xử lý vụ việc như thế nào?,question_answering
+Có bao nhiêu đơn vị tham gia chương trình?,question_answering
+Đối tượng nào được đề cập là chịu ảnh hưởng?,question_answering
+"Theo bài báo, khi nào chính sách bắt đầu có hiệu lực?",question_answering
+Những số liệu nào chứng minh kết quả của hoạt động?,question_answering
+Bài viết xác định nguyên nhân của tình trạng này là gì?,question_answering
+Ai đã công bố thông tin được nêu trong bài?,question_answering
+"Theo nội dung bài, bước tiếp theo sẽ được thực hiện ra sao?",question_answering
+Bài báo nhắc đến mức giá hoặc kinh phí cụ thể nào?,question_answering
+Điều kiện để tham gia chương trình được nêu như thế nào?,question_answering
+Tìm giúp tôi những bài phân tích tác động của AI đến việc làm.,semantic_search
+Tôi cần đọc báo về xu hướng chuyển đổi số ở Việt Nam.,semantic_search
+Tìm các bài viết bàn về an toàn giao thông đường bộ.,semantic_search
+Có bài báo nào giải thích nguyên nhân lạm phát tăng không?,semantic_search
+Tra cứu nội dung liên quan đến bảo vệ dữ liệu cá nhân.,semantic_search
+Tìm bài viết nói về tình trạng thiếu giáo viên.,semantic_search
+Tôi muốn tham khảo các bài phân tích về kinh tế xanh.,semantic_search
+Cho tôi những bài báo đề cập đến phát triển đô thị thông minh.,semantic_search
+Tìm thông tin báo chí về hoạt động khởi nghiệp của sinh viên.,semantic_search
+Có bài nào phân tích tác động của mạng xã hội đến giới trẻ?,semantic_search
+Tìm các nội dung liên quan đến ô nhiễm nguồn nước.,semantic_search
+Tôi muốn đọc bài về ứng dụng robot trong sản xuất.,semantic_search
+Tra cứu bài viết về chính sách hỗ trợ doanh nghiệp nhỏ.,semantic_search
+Tìm các bài báo nói về tình hình nhà ở cho công nhân.,semantic_search
+Có nội dung nào về phát triển nông nghiệp công nghệ cao?,semantic_search
+Tìm bài phân tích nguyên nhân ùn tắc giao thông.,semantic_search
+Cho tôi các bài viết về bảo tồn di sản văn hóa.,semantic_search
+Tìm thông tin về xu hướng thanh toán không dùng tiền mặt.,semantic_search
+Tôi cần bài báo đề cập đến đào tạo nhân lực công nghệ thông tin.,semantic_search
+Tra cứu các bài viết về phòng chống lừa đảo trực tuyến.,semantic_search
+Tìm bài báo phân tích tác động của biến động tỷ giá đến doanh nghiệp.,semantic_search
+Có bài viết nào về phát triển logistics và chuỗi cung ứng?,semantic_search
+Tôi muốn tìm hiểu các giải pháp tiết kiệm năng lượng.,semantic_search
+Tìm các bài báo nói về quyền lợi của người lao động.,semantic_search
+Bạn hãy tóm tắt bài báo đang được chọn.,summarization
+Đọc nội dung bài viết và rút ra các ý quan trọng.,summarization
+Tóm lược thông tin chính trong bài này giúp tôi.,summarization
+Hãy trình bày nội dung bài báo bằng một đoạn ngắn.,summarization
+Tạo bản tóm tắt dễ hiểu cho bài viết hiện tại.,summarization
+"Tôi không có thời gian đọc hết, hãy tóm tắt bài này.",summarization
+Rút ra những thông tin cốt lõi của bài báo.,summarization
+Nêu ngắn gọn bài viết đang nói về vấn đề gì.,summarization
+Tóm tắt các sự kiện và số liệu đáng chú ý trong bài.,summarization
+Hãy cô đọng bài báo thành vài câu.,summarization
+Cho tôi phần khái quát nội dung của bài viết này.,summarization
+Tóm tắt bài báo theo các ý chính.,summarization
+Hãy rút gọn bài viết nhưng giữ lại thông tin quan trọng.,summarization
+Nội dung trọng tâm của bài báo là gì? Hãy tóm tắt.,summarization
+Viết lại nội dung bài này dưới dạng bản tóm lược.,summarization
+Hãy tóm tắt bài báo để tôi nắm nhanh thông tin.,summarization
+Tóm lược diễn biến chính được đề cập trong bài.,summarization
+Tạo một bản tổng kết ngắn từ bài viết này.,summarization
+"Bài báo dài quá, hãy chắt lọc các ý quan trọng.",summarization
+Tóm tắt giúp tôi phần thông tin vừa tìm được.,summarization
+Hãy nêu chủ đề và các luận điểm chính của bài báo.,summarization
+"Tóm tắt nội dung theo cách ngắn gọn, dễ đọc.",summarization
+Tôi muốn biết nhanh bài viết truyền tải thông điệp gì.,summarization
+Lược thuật những điểm nổi bật trong bài báo này.,summarization
+Hãy tổng hợp các thông tin chính mà bài viết cung cấp.,summarization
+Tóm tắt bài này trong khoảng ba đến năm câu.,summarization
+Rút ra nội dung quan trọng nhất từ bài báo.,summarization
+Bạn hãy viết phần tóm tắt cho bài viết đã mở.,summarization
+Cho tôi bản tóm tắt thay vì toàn bộ nội dung bài.,summarization
+Tóm gọn các ý chính để tôi dễ nắm bắt.,summarization
+Tóm tắt bài báo theo trình tự diễn biến sự việc.,summarization
+Hãy tóm lược kết quả và kết luận của bài viết.,summarization
+Tổng kết ngắn những gì bài báo đã đề cập.,summarization
+Tóm tắt nội dung bài báo này bằng tiếng Việt dễ hiểu.,summarization
+Hãy chọn lọc thông tin quan trọng và trình bày ngắn lại.,summarization
+Lọc các bài viết theo chuyên mục thời sự.,topic_search
+Tôi muốn xem danh mục kinh tế.,topic_search
+Hiển thị những tin thuộc chuyên mục công nghệ.,topic_search
+Mở các bài trong chuyên mục thể thao.,topic_search
+Cho xem bài viết theo chuyên mục giải trí.,topic_search
+Hãy lọc tin thuộc danh mục giáo dục.,topic_search
+Tôi cần danh sách bài trong mục y tế.,topic_search
+Liệt kê các bài thuộc chuyên mục môi trường.,topic_search
+Xem các bài báo nằm trong mục du lịch.,topic_search
+Lọc nội dung theo chuyên mục pháp luật.,topic_search
+Cho tôi các bài thuộc danh mục chính trị.,topic_search
+Mở danh sách tin trong chuyên mục xã hội.,topic_search
+Hiển thị bài thuộc mục thế giới.,topic_search
+Tìm các tin trong chuyên mục văn hóa.,topic_search
+Tôi muốn duyệt danh mục thể thao trên báo.,topic_search
+Lấy danh sách bài báo theo lĩnh vực kinh tế.,topic_search
+Hãy lọc các bài thuộc lĩnh vực giáo dục.,topic_search
+Cho tôi xem những nội dung nằm trong mục công nghệ.,topic_search
+Tra cứu bài báo theo danh mục y tế.,topic_search
+Chỉ hiển thị các bài thuộc chuyên mục thời sự.,topic_search
+Danh sách bài viết của mục giải trí đâu?,topic_search
+Tôi muốn xem toàn bộ tin thuộc lĩnh vực môi trường.,topic_search
+Hãy mở mục pháp luật và liệt kê bài viết.,topic_search
+Lọc bài báo thuộc danh mục du lịch giúp tôi.,topic_search
+Hiển thị các tin theo chuyên mục chính trị.,topic_search
+Tôi cần xem những bài trong mục xã hội.,topic_search
+Cho xem các bài thuộc lĩnh vực văn hóa.,topic_search
+Lấy bài báo ở chuyên mục thế giới.,topic_search
+Duyệt các tin nằm trong danh mục giáo dục.,topic_search
+Hãy tìm bài báo theo chuyên mục sức khỏe.,topic_search
+Lọc danh sách tin theo mục thời sự.,topic_search
+Cho tôi danh sách nội dung trong chuyên mục công nghệ.,topic_search
+Truy vấn các bài thuộc lĩnh vực thể thao.,topic_search
+Mở danh mục kinh tế và hiển thị các bài báo.,topic_search
+Mở toàn văn bài báo này cho tôi.,article_detail
+Tôi muốn xem nguyên văn nội dung bài viết.,article_detail
+Hiển thị phần thân bài đầy đủ.,article_detail
+Cho tôi đọc chi tiết bài báo vừa tìm được.,article_detail
+Mở nội dung gốc của bài viết đang chọn.,article_detail
+Xem đầy đủ bài báo thay vì phần mô tả ngắn.,article_detail
+Tôi cần toàn bộ văn bản của bài này.,article_detail
+Đưa ra nội dung chi tiết của bài báo.,article_detail
+Hiển thị tất cả nội dung bài viết từ đầu đến cuối.,article_detail
+Cho tôi truy cập phần nội dung đầy đủ.,article_detail
+Tôi muốn đọc nguyên bài viết.,article_detail
+Mở bài báo để xem toàn bộ thông tin.,article_detail
+Lấy nội dung đầy đủ của bài báo đã chọn.,article_detail
+Hiện toàn văn bài viết trên màn hình.,article_detail
+"Đừng tóm tắt, hãy cho tôi xem bài báo gốc.",article_detail
+Tôi muốn xem chi tiết từng phần của bài viết.,article_detail
+Cho đọc nội dung bài báo không bị rút gọn.,article_detail
+Hiển thị toàn bộ phần văn bản của bài báo.,article_detail
+Mở trang nội dung chi tiết của bài này.,article_detail
+Tôi cần xem bản đầy đủ của tin vừa tìm.,article_detail
+Hãy tải nội dung nguyên bản của bài viết lên.,article_detail
+Cho tôi xem phần nội dung chính đầy đủ.,article_detail
+Đọc nguyên văn bài báo đã được tìm thấy.,article_detail
+Hiển thị chi tiết bài báo được chọn trong kết quả.,article_detail
+Tôi muốn mở nội dung bài viết thay vì xem tiêu đề.,article_detail
+Lấy toàn bộ văn bản của bài báo này giúp tôi.,article_detail
+Cho xem phần bài viết đầy đủ từ nguồn báo.,article_detail
+Tôi cần đọc kỹ toàn bộ bài báo.,article_detail
+"Hiển thị nội dung gốc, không cần tóm lược.",article_detail
+Mở chi tiết bài viết đầu tiên trong kết quả.,article_detail
+Cho tôi xem toàn bộ bài báo liên quan vừa tìm được.,article_detail
+Xem bản đầy đủ của bài viết này nhé.,article_detail
+Trình bày nội dung chi tiết mà nguồn báo đã đăng.,article_detail
+Tôi muốn đọc hết bài báo chứ không chỉ phần giới thiệu.,article_detail
+Hiện toàn văn của bài viết đang được tham chiếu.,article_detail
