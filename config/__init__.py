@@ -14,6 +14,7 @@ DATABASE_URL = f"sqlite:///{NEWS_DB_PATH.as_posix()}"
 VECTOR_DB_DIR = DATA_DIR / "vector_db"
 FAISS_INDEX_PATH = VECTOR_DB_DIR / "news.index"
 CHUNK_METADATA_PATH = VECTOR_DB_DIR / "chunk_metadata.json"
+TTS_CACHE_DIR = DATA_DIR / "tts_cache"
 
 INTENT_DATASET_PATH = DATA_DIR / "intent_dataset.csv"
 INTENT_MODEL_PATH = DATA_DIR / "intent_classifier.joblib"

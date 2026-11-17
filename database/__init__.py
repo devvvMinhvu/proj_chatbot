@@ -14,10 +14,18 @@ __all__ = [
     "get_article_count",
     "get_latest_articles",
     "init_db",
+    "search_latest_topic_articles",
+    "search_topic_articles",
 ]
 
 _DB_EXPORTS = {"Article", "Base", "SessionLocal", "engine", "ensure_db_initialized", "init_db"}
-_REPO_EXPORTS = {"get_article_content", "get_article_count", "get_latest_articles"}
+_REPO_EXPORTS = {
+    "get_article_content",
+    "get_article_count",
+    "get_latest_articles",
+    "search_latest_topic_articles",
+    "search_topic_articles",
+}
 
 
 def __getattr__(name: str) -> Any:

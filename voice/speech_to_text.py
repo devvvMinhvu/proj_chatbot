@@ -20,6 +20,9 @@ class SpeechRecognitionError(RuntimeError):
     """Raised when audio cannot be transcribed."""
 
 
+SpeechToTextError = SpeechRecognitionError
+
+
 def _to_bytes(audio) -> bytes:
     if isinstance(audio, (bytes, bytearray)):
         data = bytes(audio)
@@ -94,6 +97,9 @@ def transcribe_audio(
     if not text:
         raise SpeechRecognitionError("Không nhận diện được nội dung giọng nói.")
     return text
+
+
+transcribe_wav = transcribe_audio
 
 
 class ContinuousSpeechCollector:

@@ -6,10 +6,13 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 
 DEFAULT_VOICE = "vi-VN-HoaiMyNeural"
+FALLBACK_VOICE = "vi-VN-NamMinhNeural"
 VOICE_OPTIONS = {
     "Nữ - Hoài My": "vi-VN-HoaiMyNeural",
     "Nam - Nam Minh": "vi-VN-NamMinhNeural",
 }
+PRIMARY_RETRY_DELAY = 4.0
+FALLBACK_RETRY_DELAY = 3.0
 
 
 class TextToSpeechError(RuntimeError):
@@ -119,3 +122,51 @@ def synthesize_text_chunks(
     """Return MP3 parts for any UI/chat response or article text."""
     chunks = split_text_for_tts(text, max_chars=max_chars)
     return _run_async(_synthesize_all(chunks, voice, rate)) if chunks else []
+
+
+async def text_to_speech(
+    text: str,
+    voice: str = DEFAULT_VOICE,
+    rate: str = "+0%",
+    volume: str = "+0%",
+) -> bytes:
+    """Synthesize text to MP3 bytes with retry and fallback voice."""
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("Văn bản đầu vào không được để trống.")
+
+    import edge_tts
+    from edge_tts.exceptions import NoAudioReceived
+
+    async def synthesize_once(selected_voice: str) -> bytes:
+        communicate = edge_tts.Communicate(
+            text=text,
+            voice=selected_voice,
+            rate=rate,
+            volume=volume,
+        )
+        audio_data = bytearray()
+        async for chunk in communicate.stream():
+            if chunk.get("type") == "audio":
+                audio_data.extend(chunk.get("data", b""))
+        if not audio_data:
+            raise NoAudioReceived("Edge TTS kết thúc nhưng không trả về dữ liệu âm thanh.")
+        return bytes(audio_data)
+
+    try:
+        return await synthesize_once(voice)
+    except NoAudioReceived:
+        await asyncio.sleep(PRIMARY_RETRY_DELAY)
+        try:
+            return await synthesize_once(voice)
+        except NoAudioReceived as second_error:
+            if voice != DEFAULT_VOICE:
+                raise RuntimeError(
+                    f"Edge TTS không trả audio sau 2 lần thử với giọng {voice}."
+                ) from second_error
+            await asyncio.sleep(FALLBACK_RETRY_DELAY)
+            try:
+                return await synthesize_once(FALLBACK_VOICE)
+            except NoAudioReceived as fallback_error:
+                raise RuntimeError(
+                    f"Edge TTS không trả audio cho cả {voice} và {FALLBACK_VOICE}."
+                ) from fallback_error
