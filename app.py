@@ -1,5 +1,6 @@
 import streamlit as st
-from rag.pipeline_15k import load_vector_database
+from database.repository import get_article_count
+from rag.pipeline import load_vector_database
 import uuid
 from nlp.intent_handler import get_article_content, handle_intent
 # =========================================
@@ -95,11 +96,11 @@ st.caption(
 @st.cache_resource
 def initialize_system():
     index, metadata = load_vector_database()
-    return index.ntotal, len(metadata)
+    return index.ntotal, len(metadata), get_article_count()
 
 
 try:
-    total_vectors, total_metadata = initialize_system()
+    total_vectors, total_metadata, total_articles = initialize_system()
 
     if total_vectors != total_metadata:
         st.error("Số vector không khớp số metadata.")
@@ -120,7 +121,7 @@ with st.sidebar:
     st.write("**Embedding:** PhoBERT")
     st.write("**Vector store:** FAISS")
     st.write("**LLM:** Qwen2.5-1.5B")
-    st.write("**Dữ liệu:** 15.000 bài báo")
+    st.write(f"**Dữ liệu:** {total_articles:,} bài báo")
 
     st.metric("Tổng số vector", f"{total_vectors:,}")
 
@@ -145,37 +146,6 @@ for message in st.session_state.messages:
                 message.get("sources", []),
                 message_key=message["id"],
             )
-            # sources = message.get("sources", [])
-            # if sources:
-            #     with st.expander(
-            #         f"Nguồn bài báo ({len(sources)})"
-            #     ):
-            #         for source in sources:
-            #             title = source.get(
-            #                 "title",
-            #                 "Không có tiêu đề",
-            #             )
-
-            #             url = source.get("url", "")
-            #             newspaper = source.get(
-            #                 "source",
-            #                 "Không rõ nguồn",
-            #             )
-
-            #             st.markdown(f"**{title}**")
-            #             st.caption(f"Báo: {newspaper}")
-
-            #             if url:
-            #                 st.markdown(f"[Đọc bài báo]({url})")
-
-            #             similarity = source.get("similarity")
-
-            #             if similarity is not None:
-            #                 st.caption(
-            #                     f"Điểm tương đồng: {similarity:.4f}"
-            #                 )
-
-            #             st.divider()
 
 
 # =========================================

@@ -1,7 +1,7 @@
 import uuid
 import streamlit as st
 
-from rag.pipeline_15k import load_vector_database
+from rag.pipeline import load_vector_database
 from nlp.intent_handler import get_article_content, handle_intent
 from voice.speech_to_text import transcribe_audio, SpeechRecognitionError
 from voice.text_to_speech import (

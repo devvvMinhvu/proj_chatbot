@@ -10,7 +10,7 @@ import streamlit.components.v1 as components
 from streamlit_webrtc import WebRtcMode, webrtc_streamer
 
 from nlp.intent_handler import get_article_content, handle_intent
-from rag.pipeline_15k import load_vector_database
+from rag.pipeline import load_vector_database
 from voice.speech_to_text import (
     ContinuousSpeechCollector,
     SpeechRecognitionError,

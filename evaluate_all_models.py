@@ -3,10 +3,10 @@
 Expected layout (run this file from the project root or place it in the root):
   data/intent_dataset.csv
   data/intent_classifier.joblib
-  data/news_15k.jsonl
-  data/text_classifier_15k.joblib
-  data/vector_db_15k/news.index
-  data/vector_db_15k/chunk_metadata.json
+  data/news.jsonl
+  data/text_classifier.joblib
+  data/vector_db/news.index
+  data/vector_db/chunk_metadata.json
   models/vit5_summarization/
 
 The script evaluates classifiers on a fresh stratified holdout by cloning the
@@ -34,9 +34,18 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parent
-DATA_DIR = ROOT / "data"
-REPORT_DIR = ROOT / "reports"
+from config import (
+    DATA_DIR,
+    INTENT_DATASET_PATH,
+    INTENT_MODEL_PATH,
+    NEWS_JSONL_PATH,
+    PROJECT_ROOT,
+    REPORTS_DIR,
+    TEXT_CLASSIFIER_MODEL_PATH,
+)
+
+ROOT = PROJECT_ROOT
+REPORT_DIR = REPORTS_DIR
 COMPONENT_REPORT_DIR = REPORT_DIR / ".model_eval_parts"
 
 COMPONENTS = ["intent", "category", "retrieval", "rag", "summarization"]
@@ -194,13 +203,12 @@ def evaluate_classifier(
 
 def component_intent() -> dict[str, Any]:
     print_header("1/5 - PHÂN LOẠI Ý ĐỊNH: TF-IDF + MULTINOMIAL NAIVE BAYES")
-    dataset_path = DATA_DIR / "intent_dataset.csv"
-    if not dataset_path.exists():
-        raise FileNotFoundError(f"Không tìm thấy {dataset_path}")
+    if not INTENT_DATASET_PATH.exists():
+        raise FileNotFoundError(f"Không tìm thấy {INTENT_DATASET_PATH}")
 
     import pandas as pd
 
-    df = pd.read_csv(dataset_path, encoding="utf-8")
+    df = pd.read_csv(INTENT_DATASET_PATH, encoding="utf-8")
     if not {"text", "intent"}.issubset(df.columns):
         raise ValueError("intent_dataset.csv phải có cột text,intent")
     df = df.dropna(subset=["text", "intent"]).copy()
@@ -213,47 +221,43 @@ def component_intent() -> dict[str, Any]:
         name="intent_classifier (TF-IDF + MultinomialNB)",
         data_texts=df["text"].tolist(),
         labels=df["intent"].tolist(),
-        model_path=DATA_DIR / "intent_classifier.joblib",
+        model_path=INTENT_MODEL_PATH,
     )
 
 
 def component_category() -> dict[str, Any]:
     print_header("2/5 - PHÂN LOẠI CHỦ ĐỀ BÀI BÁO: TF-IDF + LOGISTIC REGRESSION")
-    dataset_path = DATA_DIR / "news_15k.jsonl"
-    if not dataset_path.exists():
-        raise FileNotFoundError(f"Không tìm thấy {dataset_path}")
+    if not NEWS_JSONL_PATH.exists():
+        raise FileNotFoundError(f"Không tìm thấy {NEWS_JSONL_PATH}")
 
-    rows = read_jsonl(dataset_path)
+    from nlp.text_classifier import format_article_text
+
+    rows = read_jsonl(NEWS_JSONL_PATH)
     texts: list[str] = []
     labels: list[str] = []
     for row in rows:
         label = safe_text(row.get("category"))
-        # Match the expected text input as title + sapo + body.
-        text = " ".join(
-            part for part in [
-                safe_text(row.get("title")),
-                safe_text(row.get("sapo")),
-                safe_text(row.get("body")),
-            ] if part
-        )
-        if label and text:
-            texts.append(text)
+        title = safe_text(row.get("title"))
+        sapo = safe_text(row.get("sapo"))
+        body = safe_text(row.get("body"))
+        if label and (title or sapo or body):
+            texts.append(format_article_text(title=title, sapo=sapo, body=body))
             labels.append(label)
 
     if not texts:
         raise ValueError("Không có bản ghi đủ title/sapo/body và category.")
 
     return evaluate_classifier(
-        name="text_classifier_15k (topic classification)",
+        name="text_classifier (topic classification)",
         data_texts=texts,
         labels=labels,
-        model_path=DATA_DIR / "text_classifier_15k.joblib",
+        model_path=TEXT_CLASSIFIER_MODEL_PATH,
     )
 
 
 def component_retrieval() -> dict[str, Any]:
     print_header("3/5 - TÌM KIẾM NGỮ NGHĨA: PHOBERT + FAISS")
-    from rag.pipeline_15k import load_vector_database, retrieve
+    from rag.pipeline import load_vector_database, retrieve
     import inspect
 
     start = time.perf_counter()
@@ -322,7 +326,7 @@ def component_retrieval() -> dict[str, Any]:
 
 def component_rag() -> dict[str, Any]:
     print_header("4/5 - RAG + QWEN2.5-1.5B: KIỂM THỬ VẬN HÀNH")
-    from rag.pipeline_15k import ask
+    from rag.pipeline import ask
 
     query = "Dự án vệ sinh học đường tại Sơn La đã xây mới bao nhiêu công trình?"
     started = time.perf_counter()
@@ -330,7 +334,7 @@ def component_rag() -> dict[str, Any]:
     elapsed = time.perf_counter() - started
 
     if not isinstance(output, dict):
-        raise TypeError("rag.pipeline_15k.ask() không trả về dict như dự kiến.")
+        raise TypeError("rag.pipeline.ask() không trả về dict như dự kiến.")
 
     answer = safe_text(output.get("answer"))
     sources = output.get("sources") or []
@@ -403,9 +407,9 @@ def rouge_l_f1(reference: list[str], hypothesis: list[str]) -> float:
 
 def component_summarization(sample_count: int) -> dict[str, Any]:
     print_header("5/5 - TÓM TẮT VĂN BẢN: VIT5 (ROUGE SO VỚI SAPO LÀM MỐC THAM KHẢO)")
-    from processing.summerizer import summarize
+    from processing.summarizer import summarize
 
-    rows = read_jsonl(DATA_DIR / "news_15k.jsonl")
+    rows = read_jsonl(NEWS_JSONL_PATH)
     eligible = [
         row for row in rows
         if safe_text(row.get("body"))

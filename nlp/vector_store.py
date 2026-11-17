@@ -1,407 +1,210 @@
+"""FAISS vector database builder, loader, and similarity search interface."""
+
+from __future__ import annotations
+
 import json
-from pathlib import Path
+from typing import Any
 
 import faiss
 import numpy as np
+import torch
 
-from database.database_get import SessionLocal, Article
-from nlp.semantic_search import create_embedding, create_embeddings
+from config import CHUNK_METADATA_PATH, FAISS_INDEX_PATH, VECTOR_DB_DIR
+from database.db import Article, SessionLocal, ensure_db_initialized
+from nlp.semantic_search import create_embedding, create_embeddings, get_embedding_model
 from processing.chunking import split_text
 
-
-# ==================================================
-# 1. ĐƯỜNG DẪN VÀ CẤU HÌNH
-# ==================================================
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
-DATA_DIR = PROJECT_ROOT / "data" / "vector_db_v2"
-INDEX_PATH = DATA_DIR / "news.index"
-METADATA_PATH = DATA_DIR / "chunk_metadata.json"
-
+CHUNK_SIZE = 150
+CHUNK_OVERLAP = 30
 BATCH_SIZE = 4
+FLUSH_SIZE = 128
+MAX_LENGTH = 256
 
-# Khởi tạo index rỗng. Kích thước thật sẽ được xác định
-# từ embedding khi xây dựng kho vector.
-index = faiss.IndexFlatIP(768)
-
-metadata_cache = None
-index_loaded = False
+_index: faiss.Index | None = None
+_metadata: list[dict[str, Any]] | None = None
 
 
-# ==================================================
-# 2. LẤY DỮ LIỆU TỪ SQLITE
-# ==================================================
+def build_vector_database() -> None:
+    """Build and atomically persist the FAISS index and chunk metadata from SQLite."""
+    ensure_db_initialized()
+    VECTOR_DB_DIR.mkdir(parents=True, exist_ok=True)
 
-def get_article():
+    _, model, device = get_embedding_model()
+    index = faiss.IndexFlatIP(model.config.hidden_size)
+    metadata: list[dict[str, Any]] = []
+    pending_texts: list[str] = []
+
     db = SessionLocal()
+    article_count = 0
+    skipped_count = 0
 
     try:
-        return (
-            db.query(Article)
-            .order_by(Article.id.asc())
-            .all()
-        )
+        total_articles = db.query(Article).count()
+
+        print("===== XÂY DỰNG VECTOR DATABASE =====")
+        print("Số bài trong DB:", total_articles)
+        print("Thiết bị:", device)
+        print("GPU:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU")
+        print("Batch size:", BATCH_SIZE)
+
+        articles = db.query(Article).order_by(Article.id.asc()).yield_per(100)
+
+        def flush_batch() -> None:
+            if not pending_texts:
+                return
+
+            vectors = create_embeddings(
+                pending_texts,
+                batch_size=BATCH_SIZE,
+                normalize=True,
+                max_length=MAX_LENGTH,
+            )
+            if len(vectors) != len(pending_texts):
+                raise RuntimeError("Số vector không khớp số chunks.")
+
+            index.add(vectors)
+            pending_texts.clear()
+            print(f"Đã tạo embedding: {index.ntotal:,} chunks")
+
+        for article in articles:
+            title = (article.title or "").strip()
+            sapo = (article.sapo or "").strip()
+            body = (article.body or "").strip()
+
+            if not body:
+                skipped_count += 1
+                continue
+
+            chunks = split_text(body, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
+            valid_chunks = [chunk.strip() for chunk in chunks if chunk and chunk.strip()]
+
+            if not valid_chunks:
+                skipped_count += 1
+                continue
+
+            article_count += 1
+
+            for chunk_id, chunk in enumerate(valid_chunks):
+                embedding_text = (
+                    f"Tiêu đề: {title}\n"
+                    f"Tóm tắt: {sapo}\n"
+                    f"Nội dung: {chunk}"
+                )
+                pending_texts.append(embedding_text)
+                metadata.append(
+                    {
+                        "vector_id": len(metadata),
+                        "article_id": article.id,
+                        "chunk_id": chunk_id,
+                        "title": title,
+                        "sapo": sapo,
+                        "source": article.source or "",
+                        "category": article.category or "",
+                        "split": article.split or "",
+                        "url": article.url or "",
+                        "text": chunk,
+                    }
+                )
+
+                if len(pending_texts) >= FLUSH_SIZE:
+                    flush_batch()
+
+            if article_count % 500 == 0:
+                print(f"Đã xử lý {article_count:,}/{total_articles:,} bài báo")
+
+        flush_batch()
     finally:
         db.close()
 
-
-# ==================================================
-# 3. XÂY DỰNG VECTOR DATABASE
-# ==================================================
-
-def build_embeddings():
-    global index, metadata_cache, index_loaded
-
-    articles = get_article()
-
-    metadata = []
-    embedding_texts = []
-
-    print("Số bài đọc từ database:", len(articles))
-
-    for article in articles:
-        title = (article.title or "").strip()
-        sapo = (article.sapo or "").strip()
-        content = (article.content or "").strip()
-
-        # Chỉ bỏ qua bài không có nội dung.
-        if not content:
-            print("Bỏ qua bài thiếu content:", article.id)
-            continue
-
-        # Chia phần nội dung bài báo thành các chunk.
-        # Tạm giữ thông số cũ của bạn; cần xem chunking.py
-        # để xác nhận chunk_size được tính theo ký tự hay từ.
-        chunks = split_text(
-            content,
-            chunk_size=150,
-            overlap=30
-        )
-
-        for chunk_id, chunk in enumerate(chunks):
-            chunk = chunk.strip()
-
-            if not chunk:
-                continue
-
-            # Nhắc lại tiêu đề và sapo giúp embedding có ngữ cảnh.
-            embedding_text = (
-                f"Tiêu đề: {title}\n"
-                f"Tóm tắt: {sapo}\n"
-                f"Nội dung: {chunk}"
-            )
-
-            embedding_texts.append(embedding_text)
-
-            # Mỗi metadata tương ứng đúng một vector.
-            metadata.append({
-                "vector_id": len(metadata),
-                "article_id": int(article.id),
-                "chunk_id": chunk_id,
-                "title": title,
-                "sapo": sapo,
-                "category": (article.category or "").strip(),
-                "research_topic": (
-                    article.research_topic or ""
-                ).strip(),
-                "author": (article.author or "").strip(),
-                "published_at": (
-                    article.published_at or ""
-                ).strip(),
-                "source": (article.source or "").strip(),
-                "url": (article.url or "").strip(),
-                "text": chunk
-            })
-
-        print(
-            f"Đã xử lý bài {article.id}: "
-            f"{len(chunks)} chunks"
-        )
-
-    if not embedding_texts:
-        raise RuntimeError(
-            "Không có chunk hợp lệ để xây dựng vector database."
-        )
-
-    print("Tổng số chunks:", len(embedding_texts))
-    print("Đang tạo embedding theo batch...")
-
-    # Tạo embedding theo batch thay vì gọi PhoBERT
-    # riêng cho từng chunk.
-    vectors = create_embeddings(
-        embedding_texts,
-        batch_size=BATCH_SIZE
-    )
-
-    if len(vectors) != len(metadata):
-        raise RuntimeError(
-            f"Số vector ({len(vectors)}) không khớp "
-            f"số metadata ({len(metadata)})."
-        )
-
-    # Chuẩn hóa vector để Inner Product tương đương cosine similarity.
-    vectors = np.asarray(vectors, dtype=np.float32)
-    faiss.normalize_L2(vectors)
-
-    # Tự lấy chiều vector từ kết quả embedding.
-    new_index = faiss.IndexFlatIP(vectors.shape[1])
-    new_index.add(vectors)
-
-    if new_index.ntotal != len(metadata):
-        raise RuntimeError(
-            "Số vector trong FAISS không khớp metadata."
-        )
-
-    # Chỉ thay index trong bộ nhớ sau khi tạo thành công.
-    index = new_index
-    metadata_cache = metadata
-    index_loaded = True
-
-    print("Xây dựng vector database hoàn tất.")
-    print("Số vector:", index.ntotal)
-    print("Kích thước vector:", index.d)
-
-    return metadata
-
-
-# ==================================================
-# 4. LƯU INDEX VÀ METADATA
-# ==================================================
-
-def save_index(metadata=None):
-    global metadata_cache
-
-    if metadata is None:
-        metadata = metadata_cache
-
-    if metadata is None:
-        raise RuntimeError(
-            "Chưa có metadata. Hãy chạy build_embeddings() trước."
-        )
-
     if index.ntotal != len(metadata):
-        raise RuntimeError(
-            f"Không thể lưu: index có {index.ntotal} vector, "
-            f"nhưng metadata có {len(metadata)} bản ghi."
-        )
+        raise RuntimeError(f"FAISS có {index.ntotal} vector, metadata có {len(metadata)} bản ghi.")
 
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    if index.ntotal == 0:
+        raise RuntimeError("Không tạo được vector nào.")
 
-    # Lưu file tạm trước để hạn chế ghi đè bằng file chưa hoàn chỉnh.
-    index_tmp = DATA_DIR / "news.index.tmp"
-    metadata_tmp = DATA_DIR / "chunk_metadata.json.tmp"
+    index_tmp = VECTOR_DB_DIR / "news.index.tmp"
+    metadata_tmp = VECTOR_DB_DIR / "chunk_metadata.json.tmp"
 
     faiss.write_index(index, str(index_tmp))
-
     with metadata_tmp.open("w", encoding="utf-8") as file:
-        json.dump(
-            metadata,
-            file,
-            ensure_ascii=False,
-            indent=2
-        )
+        json.dump(metadata, file, ensure_ascii=False)
 
-    # Chỉ lưu vào thư mục version mới, không đụng file cũ.
-    index_tmp.replace(INDEX_PATH)
-    metadata_tmp.replace(METADATA_PATH)
+    index_tmp.replace(FAISS_INDEX_PATH)
+    metadata_tmp.replace(CHUNK_METADATA_PATH)
 
-    print("Đã lưu FAISS index:", INDEX_PATH)
-    print("Đã lưu metadata:", METADATA_PATH)
+    saved_index, saved_metadata = load_vector_database(force_reload=True)
+
+    print("\n===== HOÀN TẤT =====")
+    print("Số bài đã xử lý:", article_count)
+    print("Số bài bỏ qua:", skipped_count)
+    print("Tổng vector:", saved_index.ntotal)
+    print("Tổng metadata:", len(saved_metadata))
+    print("Index:", FAISS_INDEX_PATH)
+    print("Metadata:", CHUNK_METADATA_PATH)
 
 
-# ==================================================
-# 5. NẠP INDEX VÀ METADATA
-# ==================================================
+def load_vector_database(force_reload: bool = False) -> tuple[faiss.Index, list[dict[str, Any]]]:
+    """Load and cache the FAISS index and chunk metadata."""
+    global _index, _metadata
 
-def load_index(force_reload=False):
-    global index, metadata_cache, index_loaded
+    if _index is not None and _metadata is not None and not force_reload:
+        return _index, _metadata
 
-    if index_loaded and not force_reload:
-        return metadata_cache
+    if not FAISS_INDEX_PATH.exists():
+        raise FileNotFoundError(f"Không tìm thấy FAISS index: {FAISS_INDEX_PATH}")
 
-    if not INDEX_PATH.exists():
-        raise FileNotFoundError(
-            f"Không tìm thấy index: {INDEX_PATH}. "
-            "Hãy xây dựng vector database trước."
-        )
+    if not CHUNK_METADATA_PATH.exists():
+        raise FileNotFoundError(f"Không tìm thấy metadata: {CHUNK_METADATA_PATH}")
 
-    if not METADATA_PATH.exists():
-        raise FileNotFoundError(
-            f"Không tìm thấy metadata: {METADATA_PATH}."
-        )
+    print("Đang nạp Vector Database...")
 
-    loaded_index = faiss.read_index(str(INDEX_PATH))
-
-    with METADATA_PATH.open("r", encoding="utf-8") as file:
+    loaded_index = faiss.read_index(str(FAISS_INDEX_PATH))
+    with CHUNK_METADATA_PATH.open("r", encoding="utf-8") as file:
         loaded_metadata = json.load(file)
 
     if loaded_index.ntotal != len(loaded_metadata):
         raise RuntimeError(
-            f"Index có {loaded_index.ntotal} vector nhưng metadata "
-            f"có {len(loaded_metadata)} bản ghi."
+            f"FAISS có {loaded_index.ntotal} vector nhưng metadata có {len(loaded_metadata)} bản ghi."
         )
 
-    index = loaded_index
-    metadata_cache = loaded_metadata
-    index_loaded = True
+    if loaded_index.ntotal == 0:
+        raise RuntimeError("Vector Database đang rỗng.")
 
-    return metadata_cache
+    _index = loaded_index
+    _metadata = loaded_metadata
 
+    print("Đã nạp thành công.")
+    print("Tổng số vector:", _index.ntotal)
+    print("Tổng số metadata:", len(_metadata))
+    print("Kích thước vector:", _index.d)
 
-# ==================================================
-# 6. TÌM KIẾM NGỮ NGHĨA
-# ==================================================
-
-def search(text, k=3):
-    results = semantic_search_raw(text, k=k)
-    return (
-        np.array([[r["similarity"] for r in results]], dtype=np.float32),
-        np.array([[r["vector_id"] for r in results]], dtype=np.int64)
-    )
+    return _index, _metadata
 
 
-def semantic_search_raw(query, k=20):
-    metadata = load_index()
+def search_vectors(
+    query: str,
+    candidate_k: int = 50,
+) -> tuple[np.ndarray, np.ndarray, list[dict[str, Any]]]:
+    """Encode a query and search the FAISS index for nearest chunk candidates."""
+    index, metadata = load_vector_database()
 
-    if index.ntotal == 0 or k <= 0:
-        return []
+    if not query or not query.strip():
+        raise ValueError("Câu hỏi không được để trống.")
 
-    query_embedding = create_embedding(query)
+    if index.ntotal == 0 or candidate_k <= 0:
+        return np.array([], dtype=np.float32), np.array([], dtype=np.int64), metadata
 
-    query_vector = np.asarray(
-        [query_embedding],
-        dtype=np.float32
-    )
+    embedding = create_embedding(query, normalize=True)
+    query_vector = np.asarray([embedding], dtype=np.float32)
+
+    if query_vector.shape[1] != index.d:
+        raise RuntimeError(f"Embedding có chiều {query_vector.shape[1]}, FAISS yêu cầu {index.d}.")
 
     faiss.normalize_L2(query_vector)
+    actual_k = min(candidate_k, index.ntotal)
+    scores, indices = index.search(query_vector, actual_k)
+    return scores[0], indices[0], metadata
 
-    actual_k = min(k, index.ntotal)
-
-    similarities, indices = index.search(
-        query_vector,
-        actual_k
-    )
-
-    results = []
-
-    for similarity, vector_id in zip(
-        similarities[0],
-        indices[0]
-    ):
-        # FAISS có thể trả -1 nếu không có đủ kết quả.
-        if vector_id < 0 or vector_id >= len(metadata):
-            continue
-
-        results.append({
-            **metadata[vector_id],
-            "similarity": float(similarity)
-        })
-
-    return results
-
-
-def diversify_results(
-    results,
-    max_chunks_per_article=2,
-    top_k=5
-):
-    selected = []
-    article_count = {}
-
-    for result in results:
-        article_id = result["article_id"]
-
-        current_count = article_count.get(article_id, 0)
-
-        if current_count >= max_chunks_per_article:
-            continue
-
-        selected.append(result)
-        article_count[article_id] = current_count + 1
-
-        if len(selected) >= top_k:
-            break
-
-    return selected
-
-
-def semantic_search(query, k=5):
-    # Lấy nhiều chunk ứng viên trước, sau đó hạn chế
-    # số chunk đến từ cùng một bài báo.
-    candidates = semantic_search_raw(
-        query,
-        k=max(20, k)
-    )
-
-    results = diversify_results(
-        candidates,
-        max_chunks_per_article=2,
-        top_k=k
-    )
-
-    print("========= KẾT QUẢ TRUY XUẤT =========")
-
-    for rank, result in enumerate(results, start=1):
-        print(f"\nRank {rank}")
-        print("Article ID:", result["article_id"])
-        print("Title:", result["title"])
-        print("Chunk ID:", result["chunk_id"])
-        print("Similarity:", result["similarity"])
-        print("Text:", result["text"][:200])
-
-    return results
-
-
-# ==================================================
-# 7. LẤY BÀI BÁO THEO ID
-# ==================================================
-
-def get_articles_by_ids(article_ids):
-    if not article_ids:
-        return []
-
-    db = SessionLocal()
-
-    try:
-        articles = (
-            db.query(Article)
-            .filter(Article.id.in_(set(article_ids)))
-            .all()
-        )
-
-        article_dict = {
-            article.id: article
-            for article in articles
-        }
-
-        # Giữ nguyên thứ tự và không nhân bản bài báo.
-        ordered_articles = []
-        seen = set()
-
-        for article_id in article_ids:
-            if article_id in article_dict and article_id not in seen:
-                ordered_articles.append(article_dict[article_id])
-                seen.add(article_id)
-
-        return ordered_articles
-
-    finally:
-        db.close()
-
-
-# ==================================================
-# 8. CHẠY FILE ĐỂ TẠO VECTOR DATABASE
-# ==================================================
 
 if __name__ == "__main__":
-    metadata = build_embeddings()
-    save_index(metadata)
-
-    # Kiểm tra lại bằng cách đọc hai file vừa lưu.
-    loaded_metadata = load_index(force_reload=True)
-
-    print("\n========== KIỂM TRA ==========")
-    print("Tổng số vector:", index.ntotal)
-    print("Tổng số metadata:", len(loaded_metadata))
-    print("Thư mục lưu:", DATA_DIR)
+    build_vector_database()

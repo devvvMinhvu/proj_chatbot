@@ -1,22 +1,23 @@
-"""Bo dieu phoi y dinh cho tro ly doc bao.
+"""Bộ điều phối ý định cho trợ lý đọc báo.
 
-- greeting/introduction: tra loi truc tiep.
-- semantic_search: PhoBERT + FAISS, khong goi Qwen.
-- summarization: PhoBERT + FAISS -> SQLite -> ViT5, khong goi Qwen.
-- article_detail: PhoBERT + FAISS -> SQLite, khong goi Qwen.
-- question_answering: dung pipeline RAG + Qwen hien co.
-- latest_news: truy van SQLite theo published_at; neu con bai thieu ngay dang, canh bao ve do phu du lieu.
+- greeting/introduction: trả lời trực tiếp.
+- semantic_search: PhoBERT + FAISS, không gọi Qwen.
+- summarization: PhoBERT + FAISS -> SQLite -> ViT5, không gọi Qwen.
+- article_detail: PhoBERT + FAISS -> SQLite, không gọi Qwen.
+- question_answering: dùng pipeline RAG + Qwen.
+- latest_news: truy vấn SQLite theo published_at; nếu còn bài thiếu ngày đăng, cảnh báo độ phủ dữ liệu.
 
-Cac ham dieu phoi chinh tra ve (answer, sources) cho app.py.
+Các hàm điều phối chính trả về (answer, sources) cho giao diện Streamlit.
 """
+
+from __future__ import annotations
 
 from functools import lru_cache
 from typing import Any
 
-from database.database_15k import SessionLocal, Article
+from database.repository import get_article_content, get_latest_articles
 from nlp.intent_classifier import predict_intent
-from rag.pipeline_15k import ask, retrieve, group_chunks_by_article
-
+from rag.pipeline import ask, group_chunks_by_article, retrieve
 
 INTRODUCTION_RESPONSE = """Tôi là Trợ lý đọc báo thông minh, hỗ trợ bạn khai thác
 thông tin từ các bài báo tiếng Việt.
@@ -31,44 +32,10 @@ Các chức năng chính:
 
 @lru_cache(maxsize=1)
 def _load_summarizer():
-    """Nap ViT5 khi can, tranh nap mo hinh neu khong tom tat."""
-    from processing.summerizer import summarize
+    """Nạp ViT5 khi cần, tránh nạp mô hình nếu không tóm tắt."""
+    from processing.summarizer import summarize
+
     return summarize
-
-
-def get_article_content(
-    article_id: str | None = None,
-    url: str | None = None,
-) -> dict[str, str] | None:
-    """Lay tieu de, sapo va toan van tu SQLite; uu tien ID, sau do URL."""
-    db = SessionLocal()
-    try:
-        article = None
-
-        if article_id:
-            article = (
-                db.query(Article)
-                .filter(Article.id == str(article_id))
-                .first()
-            )
-
-        if article is None and url:
-            article = (
-                db.query(Article)
-                .filter(Article.url == url)
-                .first()
-            )
-
-        if article is None:
-            return None
-
-        return {
-            "title": article.title or "",
-            "sapo": article.sapo or "",
-            "body": article.body or "",
-        }
-    finally:
-        db.close()
 
 
 def _similarity(source: dict[str, Any]) -> float:
@@ -83,7 +50,7 @@ def _rank_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _search_sources(question: str) -> list[dict[str, Any]]:
-    """Truy xuat bang PhoBERT + FAISS, gom chunk thanh bai bao."""
+    """Truy xuất bằng PhoBERT + FAISS, gom chunk thành bài báo."""
     chunks = retrieve(
         question,
         candidate_k=50,
@@ -103,7 +70,6 @@ def _search_sources(question: str) -> list[dict[str, Any]]:
             "url": article.get("url", ""),
             "similarity": article.get("similarity", 0.0),
         }
-        # Gop chunk co cung URL/ID thanh mot nguon duy nhat.
         identity = (
             str(source.get("article_id") or ""),
             str(source.get("url") or ""),
@@ -118,7 +84,7 @@ def _search_sources(question: str) -> list[dict[str, Any]]:
 
 
 def _find_source_with_body(sources: list[dict[str, Any]]):
-    """Tim nguon co toan van trong SQLite, uu tien diem tuong dong cao."""
+    """Tìm nguồn có toàn văn trong SQLite, ưu tiên điểm tương đồng cao."""
     for source in _rank_sources(sources):
         content = get_article_content(
             article_id=source.get("article_id"),
@@ -130,7 +96,7 @@ def _find_source_with_body(sources: list[dict[str, Any]]):
 
 
 def _format_search_results(sources: list[dict[str, Any]]) -> str:
-    """Tao danh sach ket qua tim kiem, khong goi LLM."""
+    """Tạo danh sách kết quả tìm kiếm, không gọi LLM."""
     ranked = _rank_sources(sources)
     if not ranked:
         return "Tôi chưa tìm thấy bài báo phù hợp. Bạn hãy thử diễn đạt lại chủ đề tìm kiếm."
@@ -160,52 +126,8 @@ def _empty_retrieval_message(intent: str) -> str:
     return "Tôi chưa tìm thấy bài báo phù hợp. Bạn hãy thử diễn đạt lại yêu cầu."
 
 
-
-def _get_latest_news(limit: int = 10):
-    """Lay cac bai co ngay dang, moi nhat theo published_at desc.
-
-    Tra ve (articles, total_count, dated_count). Chi dung ngay dang da luu;
-    khong tu suy doan ngay cho cac bai published_at dang NULL.
-    """
-    db = SessionLocal()
-    try:
-        total_count = db.query(Article).count()
-        dated_query = db.query(Article).filter(Article.published_at.isnot(None))
-        dated_count = dated_query.count()
-        rows = (
-            dated_query
-            .order_by(Article.published_at.desc())
-            .limit(limit)
-            .all()
-        )
-
-        articles: list[dict[str, Any]] = []
-        for article in rows:
-            published_at = article.published_at
-            if published_at is not None and hasattr(published_at, "strftime"):
-                published_text = published_at.strftime("%d/%m/%Y %H:%M")
-                published_iso = published_at.isoformat(sep=" ")
-            else:
-                published_text = str(published_at or "")
-                published_iso = published_text
-
-            articles.append({
-                "article_id": getattr(article, "id", None),
-                "title": getattr(article, "title", None) or "Không có tiêu đề",
-                "source": getattr(article, "source", None) or "Không rõ nguồn",
-                "url": getattr(article, "url", None) or "",
-                "published_at": published_iso,
-                "published_at_display": published_text,
-                "similarity": None,
-            })
-
-        return articles, total_count, dated_count
-    finally:
-        db.close()
-
-
-def _format_latest_news(articles, total_count: int, dated_count: int) -> str:
-    """Dinh dang danh sach tin moi nhat va neu ro do phu du lieu ngay dang."""
+def _format_latest_news(articles: list[dict[str, Any]], total_count: int, dated_count: int) -> str:
+    """Định dạng danh sách tin mới nhất và nêu rõ độ phủ dữ liệu ngày đăng."""
     if not articles:
         if dated_count == 0:
             return (
@@ -233,8 +155,9 @@ def _format_latest_news(articles, total_count: int, dated_count: int) -> str:
         )
     return "\n\n".join(lines)
 
+
 def handle_intent(question: str) -> tuple[str, list[dict[str, Any]]]:
-    """Du doan y dinh va dieu phoi toi chuc nang phu hop."""
+    """Dự đoán ý định và điều phối tới chức năng phù hợp."""
     if not question or not question.strip():
         return "Bạn hãy nhập yêu cầu cần xử lý.", []
 
@@ -252,12 +175,10 @@ def handle_intent(question: str) -> tuple[str, list[dict[str, Any]]]:
         return INTRODUCTION_RESPONSE, []
 
     if intent == "latest_news":
-        articles, total_count, dated_count = _get_latest_news(limit=10)
+        articles, total_count, dated_count = get_latest_articles(limit=10)
         answer = _format_latest_news(articles, total_count, dated_count)
         return answer, articles
 
-    # Truy xuat truc tiep cho tim kiem, tom tat va xem chi tiet.
-    # Cac nhanh nay KHONG goi ask()/Qwen.
     if intent in {"semantic_search", "summarization", "article_detail"}:
         sources = _search_sources(question)
 
@@ -278,21 +199,11 @@ def handle_intent(question: str) -> tuple[str, list[dict[str, Any]]]:
                 return _empty_retrieval_message(intent), []
             return f"## {title}\n\n{body}", [selected_source]
 
-        # summarization: chi nap ViT5 neu da tim thay bai co body.
         summary = _load_summarizer()(content["body"])
         if not summary or not summary.strip():
             return "Mô hình ViT5 chưa tạo được bản tóm tắt.", [selected_source]
         return f"## Tóm tắt: {title}\n\n{summary.strip()}", [selected_source]
 
-    # Chi hoi dap can goi pipeline RAG + Qwen.
-    if intent == "question_answering":
-        result = ask(question)
-        return (
-            result.get("answer", "Chưa tạo được câu trả lời."),
-            result.get("sources", []) or [],
-        )
-
-    # Nhan khong duoc biet: fallback an toan sang RAG hien co.
     result = ask(question)
     return (
         result.get("answer", "Chưa tạo được câu trả lời."),
