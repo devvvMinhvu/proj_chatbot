@@ -18,9 +18,10 @@ config/secrets.*
 *credentials*
 *api_key*
 
-# IDE and OS
+# IDE, AI tools, and OS
 .vscode/
 .idea/
+.claude/
 .DS_Store
 Thumbs.db
 
@@ -50,15 +51,13 @@ data/*.db
 data/*.jsonl
 
 # Generated vector database
-data/vector_db_15k/
+data/vector_db/
 
 # Downloaded AI models
 models/
-# Old vector database (built from news.db)
-data/vector_db_v2/
 
-# Large trained models (rebuild with: python -m nlp.text_classifier)
-data/text_classifier_15k.joblib
+# Large trained models (rebuild with: python -m nlp.train_text_classifier)
+data/text_classifier.joblib
 
 # Generated evaluation reports (rebuild with: python evaluate_all_models.py)
 reports/
