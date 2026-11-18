@@ -46,6 +46,28 @@ class Article(Base):
     )
 
 
+def rebuild_fts_index(connection=None) -> None:
+    """Create and repopulate the FTS5 virtual table from articles."""
+    fts_ddl = (
+        "CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5("
+        "id UNINDEXED, title, sapo, body, tokenize='unicode61 remove_diacritics 2'"
+        ")"
+    )
+    if connection is None:
+        with engine.begin() as conn:
+            rebuild_fts_index(conn)
+        return
+
+    connection.execute(text(fts_ddl))
+    connection.execute(text("DELETE FROM articles_fts"))
+    connection.execute(
+        text(
+            "INSERT INTO articles_fts (id, title, sapo, body) "
+            "SELECT id, COALESCE(title, ''), COALESCE(sapo, ''), COALESCE(body, '') FROM articles"
+        )
+    )
+
+
 def init_db() -> None:
     """Create tables if needed and migrate legacy schemas in-place."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -66,6 +88,17 @@ def init_db() -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS idx_articles_category ON articles (category)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS idx_articles_source ON articles (source)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS idx_articles_published_at ON articles (published_at)"))
+        connection.execute(
+            text(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5("
+                "id UNINDEXED, title, sapo, body, tokenize='unicode61 remove_diacritics 2'"
+                ")"
+            )
+        )
+        article_count = connection.execute(text("SELECT COUNT(*) FROM articles")).scalar() or 0
+        fts_count = connection.execute(text("SELECT COUNT(*) FROM articles_fts")).scalar() or 0
+        if fts_count != article_count:
+            rebuild_fts_index(connection)
 
 
 @lru_cache(maxsize=1)

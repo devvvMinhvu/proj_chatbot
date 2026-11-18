@@ -1,13 +1,15 @@
-"""RAG retrieval and answer generation pipeline using PhoBERT, FAISS, and Qwen via Ollama."""
+"""Hybrid RAG retrieval (SQLite FTS5 + FAISS) and grounded answer generation."""
 
 from __future__ import annotations
 
 import re
 from typing import Any
+import unicodedata
 
 import ollama
 
 from config import DEFAULT_LLM_MODEL
+from database.repository import search_fts_articles
 from nlp.vector_store import load_vector_database, search_vectors
 
 LLM_MODEL = DEFAULT_LLM_MODEL
@@ -15,46 +17,91 @@ CANDIDATE_K = 20
 TOP_K = 5
 MAX_CHUNKS_PER_ARTICLE = 2
 
-# Những từ thường xuất hiện trong câu hỏi nhưng ít giúp xác định chủ đề bài báo.
+# Những từ cấu trúc câu và từ khóa tìm kiếm, không phải thực thể/chủ đề cốt lõi.
 STOPWORDS = {
-    "là", "và", "của", "cho", "về", "tại", "trong",
-    "ngoài", "đã", "đang", "có", "được", "những",
-    "các", "một", "bao", "nhiêu", "nào", "gì",
-    "sao", "thế", "hãy", "giúp", "tôi",
-    "theo", "bài", "báo", "này", "đó", "với",
-    "dự", "án", "tổng", "chính", "xác", "khoảng",
-    "tỷ", "đồng", "triệu", "tiền",
-    "kinh", "phí", "mức", "lượng", "số",
-    "học", "sinh", "đường", "tiểu", "trường", "ở",
+    "là", "và", "của", "cho", "về", "tại", "trong", "ngoài",
+    "đã", "đang", "sẽ", "có", "được", "những", "các", "một", "vài",
+    "bao", "nhiêu", "nào", "gì", "sao", "thế", "hãy", "giúp", "tôi",
+    "mình", "bạn", "xin", "vui", "lòng", "theo", "bài", "báo", "viết",
+    "tin", "tức", "này", "đó", "với", "từ", "trên", "cũng", "như",
+    "tìm", "kiếm", "tra", "cứu", "xem", "hiển", "thị", "liệt", "kê",
+    "nhắc", "đến", "tới", "đề", "cập", "nói", "kể", "thông", "liên",
+    "quan", "mới", "nhất", "gần", "đây", "hôm", "nay", "vừa", "đăng",
+    "ở", "ai", "đâu", "khi", "chuyên", "mục", "danh", "chủ", "nội",
+    "dung", "tóm", "tắt", "toàn", "văn", "chi", "tiết",
+    "find", "one", "mentioning", "mentions", "mention", "about",
+    "article", "articles", "news", "search", "show", "me", "the",
+    "for", "of", "in", "on", "with", "that", "which", "any",
 }
+
+_PUBLISHER_NAMES = {"vnexpress", "tuổi trẻ", "tuoi tre", "tiền phong", "tien phong"}
+
+
+def _fold_text(text: str) -> str:
+    """Normalize text to lowercase without Vietnamese diacritics for robust matching."""
+    folded = str(text or "").casefold().replace("đ", "d")
+    folded = unicodedata.normalize("NFD", folded)
+    return "".join(ch for ch in folded if unicodedata.category(ch) != "Mn")
+
+
+def get_keyword_list(text: str) -> list[str]:
+    """Extract ordered meaningful query tokens while stripping framing words."""
+    words = re.findall(r"[0-9a-zA-ZÀ-ỹĐđ]+", (text or "").lower())
+    result: list[str] = []
+    seen: set[str] = set()
+    for word in words:
+        if len(word) <= 1 or word in STOPWORDS or _fold_text(word) in {
+            "tim", "kiem", "bai", "bao", "nhac", "den", "toi", "moi", "nhat",
+            "ve", "cho", "xem", "hien", "thi", "liet", "ke", "de", "cap",
+        } and word != "tim":
+            # Guard 'tim' (heart) when query contains Vietnamese diacritics elsewhere.
+            if word in STOPWORDS:
+                continue
+            # Only strip unaccented Vietnamese framing words when query itself has no accents.
+            if _fold_text(text) != (text or "").casefold():
+                if word in STOPWORDS:
+                    continue
+            else:
+                continue
+        if word not in seen:
+            seen.add(word)
+            result.append(word)
+    return result
 
 
 def get_keywords(text: str) -> set[str]:
-    """Lấy các từ có ý nghĩa từ câu hỏi hoặc nội dung."""
-    words = re.findall(r"[a-zA-ZÀ-ỹĐđ]+", (text or "").lower())
-    return {word for word in words if len(word) > 1 and word not in STOPWORDS}
+    """Lấy tập từ khóa có ý nghĩa từ câu hỏi hoặc nội dung."""
+    return set(get_keyword_list(text))
+
+
+def _folded_word_set(text: str) -> set[str]:
+    tokens = re.findall(r"[0-9a-zA-ZÀ-ỹĐđ]+", _fold_text(text))
+    return {tok for tok in tokens if len(tok) > 1}
 
 
 def has_lexical_overlap(question: str, item: dict[str, Any]) -> bool:
     """Kiểm tra kết quả retrieval có chia sẻ từ khóa chủ đề với câu hỏi hay không."""
-    query_keywords = get_keywords(question)
-    document_text = " ".join([item.get("title", ""), item.get("text", "")])
-    document_keywords = get_keywords(document_text)
-
+    query_keywords = {_fold_text(word) for word in get_keyword_list(question)}
     if not query_keywords:
         return True
 
-    overlap = query_keywords & document_keywords
+    document_text = " ".join([item.get("title", ""), item.get("sapo", ""), item.get("text", "")])
+    document_words = _folded_word_set(document_text)
+    overlap = query_keywords & document_words
     required_overlap = min(2, len(query_keywords))
     return len(overlap) >= required_overlap
 
 
 def has_title_overlap(question: str, item: dict[str, Any]) -> bool:
-    """Chỉ giữ kết quả có từ khóa chủ đề của câu hỏi xuất hiện trong tiêu đề bài báo."""
-    question_keywords = get_keywords(question)
-    title_keywords = get_keywords(item.get("title", ""))
-    overlap = question_keywords & title_keywords
-    return len(overlap) >= 2
+    """Kiểm tra từ khóa chủ đề của câu hỏi có xuất hiện trong tiêu đề bài báo hay không."""
+    question_keywords = {_fold_text(word) for word in get_keyword_list(question)}
+    if not question_keywords:
+        return False
+
+    title_words = _folded_word_set(item.get("title", ""))
+    overlap = question_keywords & title_words
+    required = 1 if len(question_keywords) == 1 else min(2, len(question_keywords))
+    return len(overlap) >= required
 
 
 def extract_locations(question: str) -> list[str]:
@@ -79,9 +126,39 @@ def extract_locations(question: str) -> list[str]:
             place_words.append(words[j])
             j += 1
 
-        locations.append(" ".join(place_words))
+        candidate = " ".join(place_words)
+        if _fold_text(candidate) not in {_fold_text(p) for p in _PUBLISHER_NAMES}:
+            locations.append(candidate)
 
     return locations
+
+
+def _extract_snippet_chunk(article: dict[str, Any], keyword_list: list[str]) -> str:
+    """Extract the most relevant passage from an FTS5-matched article body."""
+    body = (article.get("body") or "").strip()
+    sapo = (article.get("sapo") or "").strip()
+    if not body:
+        return sapo
+
+    paragraphs = [p.strip() for p in re.split(r"\n{2,}", body) if p.strip()]
+    if not paragraphs:
+        return sapo or body[:900]
+
+    folded_keywords = [_fold_text(kw) for kw in keyword_list]
+    phrase = " ".join(folded_keywords)
+
+    def score_paragraph(para: str) -> tuple[int, int]:
+        folded_para = _fold_text(para)
+        phrase_hit = 1 if len(folded_keywords) >= 2 and phrase in folded_para else 0
+        kw_hits = sum(1 for kw in folded_keywords if kw in folded_para)
+        return phrase_hit, kw_hits
+
+    best_para = max(paragraphs, key=score_paragraph)
+    if sapo and sapo not in best_para:
+        combined = f"{sapo}\n\n{best_para}"
+    else:
+        combined = best_para
+    return combined[:1200]
 
 
 def retrieve(
@@ -89,33 +166,57 @@ def retrieve(
     candidate_k: int = 50,
     top_k: int = 5,
     max_chunks_per_article: int = 2,
+    source: str | None = None,
+    category: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Retrieve and filter top chunks matching the query from FAISS."""
-    scores, indices, metadata = search_vectors(question, candidate_k=candidate_k)
-    if len(scores) == 0:
-        return []
-
-    results: list[dict[str, Any]] = []
-    article_counts: dict[Any, int] = {}
-    rejected = 0
-
+    """Hybrid retrieval combining SQLite FTS5 BM25 and PhoBERT + FAISS vector search."""
+    keyword_list = get_keyword_list(question)
+    folded_phrase = _fold_text(" ".join(keyword_list)) if len(keyword_list) >= 2 else ""
     locations = extract_locations(question)
+    folded_locations = [_fold_text(loc) for loc in locations]
     print("Địa danh nhận diện:", locations)
+
+    # Step A: Lexical FTS5 candidates (catches exact names, entities, rare terms, phrases).
+    fts_hits = (
+        search_fts_articles(
+            keyword_list,
+            limit=max(15, top_k * 3),
+            source=source,
+            category=category,
+            include_body=True,
+        )
+        if keyword_list
+        else []
+    )
+    fts_by_id: dict[str, dict[str, Any]] = {
+        str(hit["article_id"]): hit for hit in fts_hits if hit.get("article_id")
+    }
+
+    # Step B: Dense semantic FAISS candidates.
+    scores, indices, metadata = search_vectors(question, candidate_k=candidate_k)
+
+    candidates: list[dict[str, Any]] = []
+    faiss_article_ids: set[str] = set()
+    rejected = 0
 
     for score, vector_id in zip(scores, indices):
         if vector_id < 0 or vector_id >= len(metadata):
             continue
 
         item = metadata[vector_id]
-        title = item.get("title", "")
-        text = item.get("text", "")
-        searchable_text = f"{title} {text}".casefold()
-
-        if locations and not any(location.casefold() in searchable_text for location in locations):
+        if source and (item.get("source") or "").casefold() != source.casefold():
+            rejected += 1
+            continue
+        if category and (item.get("category") or "").casefold() != category.casefold():
             rejected += 1
             continue
 
-        if not has_title_overlap(question, item):
+        title = item.get("title", "")
+        sapo = item.get("sapo", "")
+        text = item.get("text", "")
+        folded_searchable = _fold_text(f"{title} {sapo} {text}")
+
+        if folded_locations and not any(loc in folded_searchable for loc in folded_locations):
             rejected += 1
             continue
 
@@ -123,22 +224,86 @@ def retrieve(
             rejected += 1
             continue
 
-        article_id = item.get("article_id")
-        if article_counts.get(article_id, 0) >= max_chunks_per_article:
+        article_id = str(item.get("article_id") or "")
+        faiss_article_ids.add(article_id)
+
+        base_score = float(score)
+        fts_hit = fts_by_id.get(article_id)
+        if fts_hit is not None:
+            base_score = max(base_score, float(fts_hit.get("similarity") or 0.72)) + 0.08
+
+        if has_title_overlap(question, item):
+            base_score += 0.15
+        if folded_phrase and folded_phrase in _fold_text(f"{title} {sapo}"):
+            base_score += 0.15
+
+        record = dict(item)
+        if fts_hit is not None:
+            record.setdefault("published_at", fts_hit.get("published_at", ""))
+            record.setdefault("published_at_display", fts_hit.get("published_at_display", ""))
+        record["similarity"] = round(min(1.0, base_score), 4)
+        record["_rank_score"] = base_score
+        candidates.append(record)
+
+    # Step C: Add FTS5 matches that missed FAISS top-k (e.g., proper nouns inside long bodies).
+    for article_id, fts_hit in fts_by_id.items():
+        if article_id in faiss_article_ids:
             continue
 
-        result = dict(item)
-        result["similarity"] = float(score)
-        results.append(result)
-        article_counts[article_id] = article_counts.get(article_id, 0) + 1
+        snippet = _extract_snippet_chunk(fts_hit, keyword_list)
+        candidate = {
+            "article_id": article_id,
+            "chunk_id": 0,
+            "title": fts_hit.get("title", ""),
+            "sapo": fts_hit.get("sapo", ""),
+            "source": fts_hit.get("source", ""),
+            "category": fts_hit.get("category", ""),
+            "url": fts_hit.get("url", ""),
+            "published_at": fts_hit.get("published_at", ""),
+            "published_at_display": fts_hit.get("published_at_display", ""),
+            "text": snippet,
+        }
 
+        folded_searchable = _fold_text(
+            f"{candidate['title']} {candidate['sapo']} {candidate['text']}"
+        )
+        if folded_locations and not any(loc in folded_searchable for loc in folded_locations):
+            rejected += 1
+            continue
+
+        if not has_lexical_overlap(question, candidate):
+            rejected += 1
+            continue
+
+        base_score = float(fts_hit.get("similarity") or 0.72)
+        if has_title_overlap(question, candidate):
+            base_score += 0.15
+        if folded_phrase and folded_phrase in _fold_text(
+            f"{candidate['title']} {candidate['sapo']}"
+        ):
+            base_score += 0.15
+
+        candidate["similarity"] = round(min(1.0, base_score), 4)
+        candidate["_rank_score"] = base_score
+        candidates.append(candidate)
+
+    candidates.sort(key=lambda item: item["_rank_score"], reverse=True)
+
+    results: list[dict[str, Any]] = []
+    article_counts: dict[Any, int] = {}
+    for candidate in candidates:
+        article_id = candidate.get("article_id")
+        if article_counts.get(article_id, 0) >= max_chunks_per_article:
+            continue
+        candidate.pop("_rank_score", None)
+        results.append(candidate)
+        article_counts[article_id] = article_counts.get(article_id, 0) + 1
         if len(results) >= top_k:
             break
 
     print(
-        f"Retrieval: kiểm tra {len(scores)} ứng viên, "
-        f"loại {rejected} chunk, "
-        f"giữ {len(results)} chunk."
+        f"Retrieval: kiểm tra {len(scores)} FAISS + {len(fts_by_id)} FTS5 ứng viên, "
+        f"loại {rejected} chunk, giữ {len(results)} chunk."
     )
     return results
 
@@ -154,8 +319,12 @@ def group_chunks_by_article(chunks: list[dict[str, Any]]) -> list[dict[str, Any]
             article = {
                 "article_id": item.get("article_id"),
                 "title": item.get("title", ""),
+                "sapo": item.get("sapo", ""),
                 "source": item.get("source", ""),
+                "category": item.get("category", ""),
                 "url": item.get("url", ""),
+                "published_at": item.get("published_at", ""),
+                "published_at_display": item.get("published_at_display", ""),
                 "similarity": item.get("similarity", 0.0),
                 "texts": [],
             }
@@ -163,9 +332,9 @@ def group_chunks_by_article(chunks: list[dict[str, Any]]) -> list[dict[str, Any]
             grouped.append(article)
 
         article = lookup[key]
-        text = (item.get("text") or "").strip()
-        if text and text not in article["texts"]:
-            article["texts"].append(text)
+        text_part = (item.get("text") or "").strip()
+        if text_part and text_part not in article["texts"]:
+            article["texts"].append(text_part)
 
         article["similarity"] = max(article["similarity"], item.get("similarity", 0.0))
 
@@ -270,19 +439,20 @@ def has_financial_evidence(question: str, articles: list[dict[str, Any]]) -> boo
     )
 
     locations = extract_locations(question)
+    folded_locations = [_fold_text(loc) for loc in locations]
 
     for article in articles:
         title = article.get("title", "")
-        text = " ".join(article.get("texts", []))
-        searchable_text = f"{title} {text}".casefold()
+        text_body = " ".join(article.get("texts", []))
+        folded_searchable = _fold_text(f"{title} {text_body}")
 
-        if locations and not any(location.casefold() in searchable_text for location in locations):
+        if folded_locations and not any(loc in folded_searchable for loc in folded_locations):
             continue
 
         if not has_title_overlap(question, {"title": title}):
             continue
 
-        sentences = re.split(r"(?<=[.!?;\n])\s+", text)
+        sentences = re.split(r"(?<=[.!?;\n])\s+", text_body)
         for sentence in sentences:
             if not amount_pattern.search(sentence):
                 continue
@@ -295,15 +465,19 @@ def has_financial_evidence(question: str, articles: list[dict[str, Any]]) -> boo
     return False
 
 
-def ask(question: str) -> dict[str, Any]:
-    """Run full RAG retrieval and grounded answer generation for a user question."""
+def ask(
+    question: str,
+    source: str | None = None,
+    category: str | None = None,
+) -> dict[str, Any]:
+    """Run full hybrid RAG retrieval and grounded answer generation for a user question."""
     print("\nĐang tìm kiếm bài báo liên quan...")
-    chunks = retrieve(question)
+    chunks = retrieve(question, source=source, category=category)
 
     if not chunks:
         return {
             "question": question,
-            "answer": "Tôi chưa tìm thấy đoạn báo phù hợp để trả lời câu hỏi này.",
+            "answer": "Tôi chưa tìm thấy bài báo phù hợp để trả lời câu hỏi này.",
             "sources": [],
         }
 
@@ -323,8 +497,12 @@ def ask(question: str) -> dict[str, Any]:
                     "source_number": i,
                     "article_id": article.get("article_id"),
                     "title": article.get("title", ""),
+                    "sapo": article.get("sapo", ""),
                     "source": article.get("source", ""),
+                    "category": article.get("category", ""),
                     "url": article.get("url", ""),
+                    "published_at": article.get("published_at", ""),
+                    "published_at_display": article.get("published_at_display", ""),
                     "similarity": article.get("similarity"),
                 }
                 for i, article in enumerate(articles, start=1)
@@ -347,8 +525,12 @@ def ask(question: str) -> dict[str, Any]:
             "source_number": i,
             "article_id": article["article_id"],
             "title": article["title"],
+            "sapo": article.get("sapo", ""),
             "source": article["source"],
+            "category": article.get("category", ""),
             "url": article["url"],
+            "published_at": article.get("published_at", ""),
+            "published_at_display": article.get("published_at_display", ""),
             "similarity": article["similarity"],
         }
         for i, article in enumerate(articles, start=1)
@@ -364,7 +546,7 @@ def ask(question: str) -> dict[str, Any]:
 if __name__ == "__main__":
     print("=" * 50)
     print("TRỢ LÝ ĐỌC BÁO RAG")
-    print("PhoBERT + FAISS + Qwen2.5-1.5B")
+    print("PhoBERT + FAISS + FTS5 + Qwen2.5-1.5B")
     print("=" * 50)
 
     load_vector_database()
