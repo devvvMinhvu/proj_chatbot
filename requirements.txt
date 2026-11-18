@@ -27,10 +27,8 @@ faiss-cpu==1.15.0
 # --- LLM (Qwen2.5 via a local Ollama server) ---
 ollama==0.6.3
 
-# --- Crawler / published_at backfill ---
-requests==2.34.2
+# --- Crawler ---
 beautifulsoup4==4.15.0
-python-dateutil==2.9.0.post0
 
 # --- Voice (app_voice.py, app_voice_continuous.py) ---
 SpeechRecognition>=3.10.0

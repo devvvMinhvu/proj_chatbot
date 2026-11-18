@@ -27,7 +27,13 @@ from typing import Any, Callable, Optional
 
 import edge_tts
 from edge_tts.exceptions import NoAudioReceived
-from mutagen.mp3 import MP3
+
+try:
+    from mutagen.mp3 import MP3
+except ImportError:
+    MP3 = None
+
+from config import TTS_CACHE_DIR
 
 
 DEFAULT_VOICE = "vi-VN-HoaiMyNeural"
@@ -46,8 +52,7 @@ MAX_API_CALLS_PER_TURN = 24
 # when Hoai My repeatedly returns no audio, and vice versa.
 MAX_CONSECUTIVE_NO_AUDIO_FAILURES_PER_VOICE = 3
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
-CACHE_DIR = _PROJECT_ROOT / "data" / "tts_cache"
+CACHE_DIR = TTS_CACHE_DIR
 CACHE_VERSION = "tts-adapter-v3"
 
 _schedule_lock = threading.Lock()
@@ -134,9 +139,10 @@ def _read_cache(text: str, voice: str, rate: str, volume: str) -> Optional[bytes
         data = path.read_bytes()
         if len(data) < 1024:
             return None
-        info = MP3(io.BytesIO(data)).info
-        if not info.length or info.length <= 0:
-            return None
+        if MP3 is not None:
+            info = MP3(io.BytesIO(data)).info
+            if not info.length or info.length <= 0:
+                return None
         return data
     except Exception:
         return None
@@ -155,10 +161,12 @@ def _write_cache(text: str, voice: str, rate: str, volume: str, data: bytes) -> 
 
 
 def _duration_seconds(data: bytes, text: str) -> float:
-    try:
-        return float(MP3(io.BytesIO(data)).info.length)
-    except Exception:
-        return max(0.4, len(text.split()) / 2.5)
+    if MP3 is not None:
+        try:
+            return float(MP3(io.BytesIO(data)).info.length)
+        except Exception:
+            pass
+    return max(0.4, len(text.split()) / 2.5)
 
 
 async def _request_audio(

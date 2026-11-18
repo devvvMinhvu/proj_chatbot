@@ -16,7 +16,6 @@ _SOURCE_NAMES = {
     "vnexpress": "VnExpress",
     "tienphong": "Tiền Phong",
     "tuoitre": "Tuổi Trẻ",
-    "nhandan": "Nhân Dân",
 }
 
 _URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
@@ -29,11 +28,11 @@ _INLINE_LIST_NUMBER_RE = re.compile(
     r"(?<=[.!?])\s+\d{1,2}[.)]\s+(?=[A-ZÀ-Ỹ])"
 )
 _SOURCE_SUFFIX_RE = re.compile(
-    r"\s+[—–]\s+(vnexpress|tienphong|tuoitre|nhandan)\b",
+    r"\s+[—–]\s+(vnexpress|tienphong|tuoitre)\b",
     re.IGNORECASE,
 )
 _PUBLISHED_AT_RE = re.compile(
-    r"Ngày đăng theo dữ liệu lưu\s*:\s*(\d{1,2})/(\d{1,2})/(\d{4})"
+    r"Ngày đăng(?:\s+theo dữ liệu lưu)?\s*:\s*(\d{1,2})/(\d{1,2})/(\d{4})"
     r"(?:\s+(\d{1,2}):(\d{2}))?",
     re.IGNORECASE,
 )

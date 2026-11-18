@@ -11,22 +11,14 @@ from datetime import datetime
 from unittest.mock import patch
 
 # Mock costly project dependencies before importing the handler.
-database_pkg = types.ModuleType("database")
-database_pkg.__path__ = []
-database_module = types.ModuleType("database.database_15k")
-database_module.SessionLocal = lambda: None
-database_module.Article = type("Article", (), {})
-sys.modules["database"] = database_pkg
-sys.modules["database.database_15k"] = database_module
-
 rag_pkg = types.ModuleType("rag")
 rag_pkg.__path__ = []
-rag_module = types.ModuleType("rag.pipeline_15k")
+rag_module = types.ModuleType("rag.pipeline")
 rag_module.ask = lambda question: {"answer": "mock answer", "sources": []}
 rag_module.retrieve = lambda question, **kwargs: []
 rag_module.group_chunks_by_article = lambda chunks: []
 sys.modules["rag"] = rag_pkg
-sys.modules["rag.pipeline_15k"] = rag_module
+sys.modules["rag.pipeline"] = rag_module
 
 from nlp import intent_handler as handler  # noqa: E402
 

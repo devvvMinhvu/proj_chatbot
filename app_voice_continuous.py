@@ -14,7 +14,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from streamlit_webrtc import WebRtcMode, webrtc_streamer
 
-from database.database_15k import Article, SessionLocal
+from database.repository import get_article_count
 from nlp.intent_handler import get_article_content, handle_intent
 from voice.speech_to_text import transcribe_wav, SpeechToTextError
 from voice.tts_background import (
@@ -36,7 +36,7 @@ st.set_page_config(
 )
 
 st.title("📰 Trợ lý đọc báo thông minh")
-st.caption("Hệ thống hỏi đáp báo chí ứng dụng NLP và RAG — Voice v8 ổn định")
+st.caption("Hệ thống hỏi đáp báo chí ứng dụng NLP và RAG — Hội thoại giọng nói liên tục")
 
 SAMPLE_RATE = 16000
 VAD_RMS_THRESHOLD = 450       # Tăng nếu mic nhận tiếng ồn; giảm nếu giọng nói quá nhỏ.
@@ -56,7 +56,7 @@ def get_tts_audio_queue_component():
             f"Không tìm thấy audio queue component: {component_dir / 'index.html'}"
         )
     return components.declare_component(
-        "news_assistant_tts_audio_queue_v8",
+        "news_assistant_tts_audio_queue",
         path=str(component_dir),
     )
 
@@ -303,11 +303,7 @@ for key, value in state_defaults.items():
 @st.cache_data
 def initialize_system():
     """Đếm bài báo trong SQLite; không nạp PhoBERT/FAISS khi mở ứng dụng."""
-    db = SessionLocal()
-    try:
-        return int(db.query(Article).count())
-    finally:
-        db.close()
+    return int(get_article_count())
 
 
 try:
