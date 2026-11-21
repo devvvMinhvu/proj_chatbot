@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from processing.sentences import clean_generated_text
 from processing.summarizers.base import Summarizer
 from processing.summarizers.extractive import _empty_cuda_cache
 
@@ -136,7 +137,7 @@ class Seq2SeqSummarizer(Summarizer):
             generate_kwargs["no_repeat_ngram_size"] = self.no_repeat_ngram_size
         with torch.inference_mode():
             outputs = model.generate(**inputs, **generate_kwargs)
-        return tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
+        return clean_generated_text(tokenizer.decode(outputs[0], skip_special_tokens=True))
 
     def describe(self) -> dict[str, Any]:
         return {

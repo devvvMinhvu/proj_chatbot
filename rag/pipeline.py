@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import re
 from typing import Any
-import unicodedata
 
 import ollama
 
 from config import DEFAULT_LLM_MODEL
 from database.repository import search_fts_articles
 from nlp.vector_store import load_vector_database, search_vectors
+from processing.text_matching import (
+    contains_phrase,
+    fold_text as _fold_text,
+    is_vietnamese_syllable,
+    matched_keywords,
+)
 
 LLM_MODEL = DEFAULT_LLM_MODEL
 CANDIDATE_K = 20
@@ -35,13 +40,6 @@ STOPWORDS = {
 }
 
 _PUBLISHER_NAMES = {"vnexpress", "tuổi trẻ", "tuoi tre", "tiền phong", "tien phong"}
-
-
-def _fold_text(text: str) -> str:
-    """Normalize text to lowercase without Vietnamese diacritics for robust matching."""
-    folded = str(text or "").casefold().replace("đ", "d")
-    folded = unicodedata.normalize("NFD", folded)
-    return "".join(ch for ch in folded if unicodedata.category(ch) != "Mn")
 
 
 def get_keyword_list(text: str) -> list[str]:
@@ -79,20 +77,11 @@ def _folded_word_set(text: str) -> set[str]:
     return {tok for tok in tokens if len(tok) > 1}
 
 
-#: A Vietnamese syllable without diacritics: optional onset, a vowel nucleus, optional coda.
-_VIETNAMESE_SYLLABLE = re.compile(
-    r"(?:ngh|ng|nh|ch|gh|gi|kh|ph|qu|th|tr|[bcdghklmnprstvx])?"
-    r"[aeiouy]{1,3}"
-    r"(?:ch|ng|nh|[cmnpt])?"
-)
-
 #: Bonus added to a dense hit's rank score, scaled by the share of query keywords it contains.
 KEYWORD_COVERAGE_BONUS = 0.10
-
-
-def is_vietnamese_syllable(token: str) -> bool:
-    """True when a (diacritic-free or accented) token can be a single Vietnamese syllable."""
-    return bool(_VIETNAMESE_SYLLABLE.fullmatch(_fold_text(token)))
+#: Score of an FTS5 phrase/AND hit whose keywords only match when accents are ignored;
+#: equal to the any-word (OR) tier in ``database.repository.search_fts_articles``.
+FTS_LOOSE_MATCH_SCORE = 0.62
 
 
 def entity_terms(question: str) -> set[str]:
@@ -123,11 +112,11 @@ def entity_terms(question: str) -> set[str]:
 
 def keyword_coverage(question: str, item: dict[str, Any]) -> float:
     """Share of the question's keywords that appear in a retrieved chunk (0.0 to 1.0)."""
-    query_keywords = {_fold_text(word) for word in get_keyword_list(question)}
+    query_keywords = get_keyword_list(question)
     if not query_keywords:
         return 0.0
     document_text = " ".join([item.get("title", ""), item.get("sapo", ""), item.get("text", "")])
-    return len(query_keywords & _folded_word_set(document_text)) / len(query_keywords)
+    return len(matched_keywords(query_keywords, document_text)) / len(query_keywords)
 
 
 def has_entity_support(question: str, item: dict[str, Any]) -> bool:
@@ -145,25 +134,23 @@ def has_lexical_overlap(question: str, item: dict[str, Any]) -> bool:
     Áp dụng cho ứng viên FTS5. Ứng viên FAISS không bị loại theo từ khóa thông thường
     (để giữ các kết quả diễn đạt khác), chỉ cần chứa đủ tên riêng (``has_entity_support``).
     """
-    query_keywords = {_fold_text(word) for word in get_keyword_list(question)}
+    query_keywords = get_keyword_list(question)
     if not query_keywords:
         return True
 
     document_text = " ".join([item.get("title", ""), item.get("sapo", ""), item.get("text", "")])
-    document_words = _folded_word_set(document_text)
-    overlap = query_keywords & document_words
+    overlap = matched_keywords(query_keywords, document_text)
     required_overlap = min(2, len(query_keywords))
     return len(overlap) >= required_overlap
 
 
 def has_title_overlap(question: str, item: dict[str, Any]) -> bool:
     """Kiểm tra từ khóa chủ đề của câu hỏi có xuất hiện trong tiêu đề bài báo hay không."""
-    question_keywords = {_fold_text(word) for word in get_keyword_list(question)}
+    question_keywords = get_keyword_list(question)
     if not question_keywords:
         return False
 
-    title_words = _folded_word_set(item.get("title", ""))
-    overlap = question_keywords & title_words
+    overlap = matched_keywords(question_keywords, item.get("title", ""))
     required = 1 if len(question_keywords) == 1 else min(2, len(question_keywords))
     return len(overlap) >= required
 
@@ -235,7 +222,6 @@ def retrieve(
 ) -> list[dict[str, Any]]:
     """Hybrid retrieval combining SQLite FTS5 BM25 and PhoBERT + FAISS vector search."""
     keyword_list = get_keyword_list(question)
-    folded_phrase = _fold_text(" ".join(keyword_list)) if len(keyword_list) >= 2 else ""
     locations = extract_locations(question)
     folded_locations = [_fold_text(loc) for loc in locations]
     print("Địa danh nhận diện:", locations)
@@ -252,9 +238,18 @@ def retrieve(
         if keyword_list
         else []
     )
-    fts_by_id: dict[str, dict[str, Any]] = {
-        str(hit["article_id"]): hit for hit in fts_hits if hit.get("article_id")
-    }
+    fts_by_id: dict[str, dict[str, Any]] = {}
+    for hit in fts_hits:
+        if not hit.get("article_id"):
+            continue
+        hit = dict(hit)
+        # FTS5 ignores accents ("tăng" also matches "tặng"). A phrase/AND hit that
+        # only matched that way is scored like an any-word (OR) hit.
+        if hit.get("fts_tier", 0) < 2 and keyword_list:
+            hit_text = " ".join([hit.get("title", ""), hit.get("sapo", ""), hit.get("body", "")])
+            if len(matched_keywords(keyword_list, hit_text)) < len(keyword_list):
+                hit["similarity"] = min(float(hit.get("similarity") or 0.72), FTS_LOOSE_MATCH_SCORE)
+        fts_by_id[str(hit["article_id"])] = hit
 
     # Step B: Dense semantic FAISS candidates.
     scores, indices, metadata = search_vectors(question, candidate_k=candidate_k)
@@ -300,7 +295,7 @@ def retrieve(
 
         if has_title_overlap(question, item):
             base_score += 0.15
-        if folded_phrase and folded_phrase in _fold_text(f"{title} {sapo}"):
+        if contains_phrase(keyword_list, f"{title} {sapo}"):
             base_score += 0.15
 
         record = dict(item)
@@ -344,9 +339,7 @@ def retrieve(
         base_score = float(fts_hit.get("similarity") or 0.72)
         if has_title_overlap(question, candidate):
             base_score += 0.15
-        if folded_phrase and folded_phrase in _fold_text(
-            f"{candidate['title']} {candidate['sapo']}"
-        ):
+        if contains_phrase(keyword_list, f"{candidate['title']} {candidate['sapo']}"):
             base_score += 0.15
 
         candidate["similarity"] = round(min(1.0, base_score), 4)
@@ -593,11 +586,9 @@ def has_financial_evidence(question: str, articles: list[dict[str, Any]]) -> boo
         r"tổng\s+giá\s+trị",
         flags=re.IGNORECASE,
     )
-    topic_keywords = {
-        _fold_text(word)
-        for word in get_keyword_list(question)
-        if _fold_text(word) not in _FINANCE_QUERY_WORDS
-    }
+    topic_keywords = [
+        word for word in get_keyword_list(question) if _fold_text(word) not in _FINANCE_QUERY_WORDS
+    ]
 
     locations = extract_locations(question)
     folded_locations = [_fold_text(loc) for loc in locations]
@@ -619,7 +610,7 @@ def has_financial_evidence(question: str, articles: list[dict[str, Any]]) -> boo
                 continue
             if not finance_pattern.search(sentence):
                 continue
-            if topic_keywords and not topic_keywords & _folded_word_set(sentence):
+            if topic_keywords and not matched_keywords(topic_keywords, sentence):
                 continue
             return True
 

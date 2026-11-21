@@ -7,7 +7,7 @@ Hệ thống hỏi đáp, tìm kiếm kết hợp (SQLite FTS5 + PhoBERT/FAISS),
 - `config/`: Đường dẫn tập trung và cấu hình hệ thống (`DATA_DIR`, `NEWS_JSONL_PATH`, `NEWS_DB_PATH`, `VECTOR_DB_DIR`, `PIPER_MODELS_DIR`, đường dẫn các mô hình).
 - `crawler/`: Thu thập và hậu xử lý bài báo tiếng Việt từ VnExpress, Tuổi Trẻ và Tiền Phong (`config.py`, `http_client.py`, `extractor.py`, `sources.py`, `pipeline.py`, `process.py`, `postprocess.py`).
 - `database/`: Mô hình SQLAlchemy + FTS5 (`db.py`), truy vấn bài báo/chuyên mục/tìm kiếm toàn văn (`repository.py`) và nhập JSONL vào SQLite (`import_jsonl.py`).
-- `processing/`: Chia đoạn văn bản (`chunking.py`), tách câu tiếng Việt (`sentences.py`), tóm tắt bài báo bằng ViT5 cho ứng dụng (`summarizer.py`) và các hệ thống tóm tắt dùng để so sánh (`summarizers/`: Lead-k, TextRank, PhoBERT centroid + MMR, ViT5, mT5).
+- `processing/`: Chia đoạn văn bản (`chunking.py`), tách câu tiếng Việt (`sentences.py`), so khớp từ khóa có phân biệt dấu (`text_matching.py`), tóm tắt bài báo bằng ViT5 cho ứng dụng (`summarizer.py`) và các hệ thống tóm tắt dùng để so sánh (`summarizers/`: Lead-k, TextRank, PhoBERT centroid + MMR, ViT5, mT5).
 - `evaluation/`: Độ đo ROUGE/BLEU tiếng Việt (`metrics.py`), nạp dữ liệu đánh giá (`datasets.py`) và benchmark so sánh mô hình tóm tắt (`summarization_benchmark.py`).
 - `nlp/`:
   - `semantic_search.py`: Sinh vector embedding PhoBERT (lazy-load).

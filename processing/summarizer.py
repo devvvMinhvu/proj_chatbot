@@ -13,6 +13,7 @@ from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
 from config import VIT5_MODEL_DIR
 from processing.chunking import split_text
+from processing.sentences import clean_generated_text
 
 #: Only the first chunks (400 words each, see processing.chunking) are summarized.
 MAX_SUMMARY_CHUNKS = 2
@@ -87,7 +88,7 @@ def summarize_chunks_batch(chunks: list[str]) -> list[str]:
     decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
     results = [""] * len(chunks)
     for (pos, _), summary in zip(cleaned_positions, decoded):
-        results[pos] = summary.strip()
+        results[pos] = clean_generated_text(summary)
     return results
 
 

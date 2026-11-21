@@ -448,5 +448,92 @@ class TestDenseFilterAndFinanceEvidence(unittest.TestCase):
         self.assertFalse(rag.has_financial_evidence(question, other_topic))
 
 
+class TestQuestionRoutingAndAccentMatching(unittest.TestCase):
+    def _routed_intent(self, question: str, classifier_intent: str) -> str:
+        seen: list[str] = []
+        with patch.object(handler, "predict_intent", return_value=classifier_intent), patch.object(
+            handler, "retrieve", return_value=[]
+        ), patch("builtins.print", side_effect=lambda *a, **k: seen.append(" ".join(map(str, a)))):
+            handler._execute_turn_plan(question)
+        line = next(item for item in seen if item.startswith("[INTENT]"))
+        return line.split()[1]
+
+    def test_question_words_route_to_question_answering(self):
+        cases = {
+            "Người dân lo lắng thế nào khi giá xăng tăng?": "latest_topic_search",
+            "Vì sao giá vàng tăng mạnh": "semantic_search",
+            "Ai là người giành Quả Bóng Vàng 2026?": "semantic_search",
+        }
+        for question, classifier_intent in cases.items():
+            with self.subTest(question=question):
+                self.assertEqual(self._routed_intent(question, classifier_intent), "question_answering")
+
+    def test_search_and_browse_requests_are_not_turned_into_questions(self):
+        cases = {
+            "Tìm bài nhắc đến Mbappe?": ("semantic_search", "semantic_search"),
+            "Có nội dung nào về thị trường lao động?": ("semantic_search", "semantic_search"),
+            "Chuyên mục thể thao có gì?": ("topic_search", "topic_search"),
+            "Bạn là ai?": ("introduction", "introduction"),
+        }
+        for question, (classifier_intent, expected) in cases.items():
+            with self.subTest(question=question):
+                self.assertEqual(self._routed_intent(question, classifier_intent), expected)
+
+    def test_new_question_is_not_answered_from_unrelated_active_article(self):
+        fuel_article = {
+            "article_id": "fuel-1",
+            "title": "Châu Âu chạy đua ứng phó khủng hoảng giá xăng dầu",
+            "sapo": "Giá xăng dầu tăng vọt, châu Âu mạnh tay giảm thuế.",
+            "source": "vnexpress",
+            "url": "https://vnexpress.net/fuel-1.html",
+        }
+        fuel_content = {**fuel_article, "body": "Giá nhiên liệu tăng mạnh khiến người dân lo lắng."}
+        with patch.object(handler, "predict_intent", return_value="semantic_search"), patch.object(
+            handler, "get_article_content", return_value=fuel_content
+        ), patch.object(handler, "_handle_target_article") as mock_target, patch.object(
+            handler, "retrieve", return_value=[]
+        ):
+            handler._execute_turn_plan("Vì sao giá vàng tăng mạnh?", active_article=fuel_article)
+            mock_target.assert_not_called()
+
+            handler._execute_turn_plan("Giá xăng dầu tăng bao nhiêu?", active_article=fuel_article)
+            mock_target.assert_called_once()
+
+    def test_accented_keywords_need_matching_accents(self):
+        self.assertEqual(rag.matched_keywords(["giá", "xăng"], "Món quà cho mẹ ở Gia Lai"), set())
+        self.assertEqual(rag.matched_keywords(["tăng"], "Quà tặng cho phụ nữ"), set())
+        self.assertEqual(rag.matched_keywords(["giá"], "Giá xăng hôm nay"), {"giá"})
+        # Unaccented input and foreign names still match loosely.
+        self.assertEqual(rag.matched_keywords(["gia", "xang"], "Giá xăng tăng"), {"gia", "xang"})
+        self.assertEqual(rag.matched_keywords(["mbappé"], "Mbappe ghi bàn"), {"mbappé"})
+
+    def test_title_bonus_ignores_accent_collisions(self):
+        question = "Người dân lo lắng thế nào khi giá xăng tăng?"
+        gia_lai = {"title": "Món quà tháng 10 cho những người mẹ khó khăn miền núi Gia Lai"}
+        fuel = {"title": "Xăng tăng gần 5.000 đồng/lít, người dân lo giá hàng hóa"}
+        self.assertFalse(rag.has_title_overlap(question, gia_lai))
+        self.assertTrue(rag.has_title_overlap(question, fuel))
+
+    def test_fts_hit_matching_only_without_accents_is_demoted(self):
+        loose_hit = {
+            "article_id": "gift-1",
+            "title": "Món quà tháng 10 cho những người mẹ ở Gia Lai",
+            "sapo": "",
+            "body": "Người dân lo lắng. Giá xăng cao. Quà tặng cho mẹ.",
+            "source": "tuoitre",
+            "category": "news",
+            "url": "https://tuoitre.vn/gift-1.html",
+            "similarity": 0.83,
+            "fts_tier": 1,
+        }
+        with patch.object(rag, "search_fts_articles", return_value=[loose_hit]), patch.object(
+            rag, "search_vectors", return_value=([], [], [])
+        ):
+            results = rag.retrieve("người dân lo lắng vì giá xăng tăng", candidate_k=10, top_k=5)
+
+        self.assertEqual(len(results), 1)
+        self.assertLessEqual(results[0]["similarity"], rag.FTS_LOOSE_MATCH_SCORE)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

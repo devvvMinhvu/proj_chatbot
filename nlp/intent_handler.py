@@ -27,6 +27,7 @@ from database.repository import (
     search_topic_articles,
 )
 from nlp.intent_classifier import predict_intent
+from processing.text_matching import matched_keywords
 
 
 # Nạp pipeline nặng theo nhu cầu, tránh import PyTorch ngay khi mở Streamlit.
@@ -232,6 +233,9 @@ def _has_search_cue(question: str) -> bool:
         "nhac toi",
         "de cap",
         "co bai nao",
+        "co bai viet nao",
+        "co tin nao",
+        "co noi dung nao",
         "bai nao noi ve",
         "bai nao nhac",
         "find one",
@@ -240,6 +244,24 @@ def _has_search_cue(question: str) -> bool:
         "search for",
     )
     return any(f" {cue} " in normalized_question for cue in cues)
+
+
+#: Folded question phrases that ask for a fact from the news rather than a list of articles.
+QUESTION_CUES = (
+    "vi sao", "tai sao", "the nao", "ra sao", "bao nhieu", "khi nao", "bao gio",
+    "o dau", "la gi", "la ai", "ai la", "nguyen nhan", "co phai",
+)
+
+#: Classifier intents the question rule may override (category browsing is left alone).
+_SEARCH_INTENTS = {"semantic_search", "latest_topic_search", "unknown"}
+
+
+def _has_question_cue(question: str) -> bool:
+    """Nhận biết câu hỏi cần trả lời (vì sao, bao nhiêu, ai…, hoặc kết thúc bằng '?')."""
+    normalized_question = f" {_normalize_label(question)} "
+    if (question or "").strip().endswith("?") or normalized_question.startswith(" ai "):
+        return True
+    return any(f" {cue} " in normalized_question for cue in QUESTION_CUES)
 
 
 def _has_latest_cue(question: str) -> bool:
@@ -444,12 +466,18 @@ def _is_bare_followup_request(question: str, intent: str) -> bool:
     return len(_extract_content_tokens(question)) == 0
 
 
-def _article_has_overlap(
+def _article_covers_question(
+    question: str,
     question_tokens: list[str],
     article: dict[str, Any],
     content: dict[str, Any] | None = None,
 ) -> bool:
-    """Check whether any specific query token overlaps with an active article."""
+    """Check whether every specific word of the question appears in the active article.
+
+    Words are matched as whole words and accent-aware ("vàng" is not "vang"), so a new
+    question such as "Vì sao giá vàng tăng?" is not answered from an article about fuel
+    prices just because both mention "giá" and "tăng".
+    """
     searchable = " ".join(
         [
             str(article.get("title") or ""),
@@ -459,9 +487,14 @@ def _article_has_overlap(
             str((content or {}).get("body") or ""),
         ]
     )
-    folded_searchable = _normalize_label(searchable)
-    article_words = set(re.findall(r"[a-z0-9]+", folded_searchable))
-    return any(tok in article_words or tok in folded_searchable for tok in question_tokens)
+    wanted = set(question_tokens)
+    words = [
+        word
+        for word in re.findall(r"[0-9a-zA-ZÀ-ỹĐđ]+", question or "")
+        if _normalize_label(word) in wanted
+    ]
+    distinct = {word.casefold() for word in words}
+    return len(matched_keywords(sorted(distinct), searchable)) == len(distinct)
 
 
 def _get_latest_news(
@@ -934,12 +967,16 @@ def _execute_turn_plan(
         intent = "topic_search"
     elif _has_latest_cue(question):
         intent = "latest_topic_search" if _extract_latest_topic_terms(question) else "latest_news"
-    elif intent == "latest_topic_search":
-        intent = "semantic_search"
     elif (
         intent not in {"greeting", "introduction", "summarization", "article_detail"}
         and _has_search_cue(question)
     ):
+        intent = "semantic_search"
+    elif intent in _SEARCH_INTENTS and _has_question_cue(question):
+        # The classifier has few question examples; a question word without a
+        # search phrase ("Vì sao giá vàng tăng?") asks for an answer, not a list.
+        intent = "question_answering"
+    elif intent == "latest_topic_search":
         intent = "semantic_search"
 
     print(f"[INTENT] {intent} | {question}")
@@ -1030,8 +1067,8 @@ def _execute_turn_plan(
                 article_id=active_article.get("article_id"),
                 url=active_article.get("url"),
             )
-            if not specific_tokens or _article_has_overlap(
-                specific_tokens, active_article, content=active_content
+            if not specific_tokens or _article_covers_question(
+                question, specific_tokens, active_article, content=active_content
             ):
                 return _handle_target_article(
                     question,

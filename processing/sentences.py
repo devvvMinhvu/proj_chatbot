@@ -54,3 +54,14 @@ def split_sentences(text: str) -> list[str]:
                 merged.append(sentence)
         result.extend(merged)
     return result
+
+
+_SPACE_BEFORE_PUNCT = re.compile(r"\s+([.,;:!?…%)\]])")
+_SPACE_AFTER_OPEN = re.compile(r"([(\[])\s+")
+
+
+def clean_generated_text(text: str) -> str:
+    """Undo tokenizer spacing in model output: "nhà ." -> "nhà.", "( a )" -> "(a)"."""
+    text = _SPACE_BEFORE_PUNCT.sub(r"\1", str(text or ""))
+    text = _SPACE_AFTER_OPEN.sub(r"\1", text)
+    return re.sub(r"[ \t]{2,}", " ", text).strip()
