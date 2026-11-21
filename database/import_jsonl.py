@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from config import NEWS_DB_PATH, NEWS_JSONL_PATH
 from crawler.config import TIMEZONE
 from crawler.extractor import parse_published_at
-from database.db import Article, SessionLocal, init_db
+from database.db import Article, SessionLocal, init_db, rebuild_fts_index
 
 
 def _to_text(value: Any) -> str:
@@ -159,6 +159,9 @@ def import_jsonl(
             inserted += inserted_now
             updated += updated_now
             skipped_existing += unchanged_now
+
+        if inserted > 0 or updated > 0:
+            rebuild_fts_index()
 
         total_articles = db.scalar(select(func.count()).select_from(Article)) or 0
         dated_articles = (
