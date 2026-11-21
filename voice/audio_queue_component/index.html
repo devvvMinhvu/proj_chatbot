@@ -31,12 +31,14 @@
   <div class="bar">
     <span id="status" class="status">Đang chờ âm thanh…</span>
     <button id="play" class="primary" hidden>▶ Phát / tiếp tục</button>
+    <button id="stop" hidden>⏹ Dừng đọc</button>
   </div>
 
   <script>
     (() => {
       const statusEl = document.getElementById("status");
       const playButton = document.getElementById("play");
+      const stopButton = document.getElementById("stop");
 
       let currentTaskId = null;
       let currentArgs = {};
@@ -44,6 +46,7 @@
       let pending = [];
       let currentAudio = null;
       let finishedReported = false;
+      let stoppedByUser = false;
       let blocked = false;
       let totalReceived = 0;
       let totalPlayed = 0;
@@ -66,37 +69,48 @@
         }, "*");
       }
 
+      function syncButtons() {
+        const hasMoreOrPlaying = Boolean(currentAudio) || pending.length > 0;
+        stopButton.hidden = stoppedByUser || !hasMoreOrPlaying;
+      }
+
       function reportFinishedIfReady() {
-        if (currentArgs.is_complete && !currentAudio && pending.length === 0 && !finishedReported) {
+        syncButtons();
+        if (currentArgs.is_complete && !currentAudio && pending.length === 0 && !finishedReported && !stoppedByUser) {
           finishedReported = true;
           playButton.hidden = true;
+          stopButton.hidden = true;
           setStatus(`Đã đọc xong ${totalPlayed} phần âm thanh.`);
           sendValue("finished");
         }
       }
 
       function playNext() {
-        if (currentAudio) return;
+        if (currentAudio || stoppedByUser) return;
         if (pending.length === 0) {
           playButton.hidden = true;
           if (currentArgs.is_complete) {
             reportFinishedIfReady();
           } else {
+            syncButtons();
             setStatus(`Đã phát ${totalPlayed} phần; đang chuẩn bị phần tiếp theo…`);
           }
           return;
         }
 
         const segment = pending.shift();
-        const audio = new Audio(`data:audio/mpeg;base64,${segment.audio_b64}`);
+        const mimeType = segment.mime_type || "audio/wav";
+        const audio = new Audio(`data:${mimeType};base64,${segment.audio_b64}`);
         currentAudio = audio;
         blocked = false;
         playButton.hidden = true;
+        syncButtons();
         setStatus(`Đang đọc phần ${totalPlayed + 1}${currentArgs.is_complete ? `/${totalReceived}` : ""}…`);
 
         audio.onended = () => {
           currentAudio = null;
           totalPlayed += 1;
+          syncButtons();
           playNext();
         };
         audio.onerror = () => {
@@ -104,6 +118,7 @@
           pending.unshift(segment);
           blocked = true;
           playButton.hidden = false;
+          syncButtons();
           setStatus("Trình duyệt chưa phát được âm thanh. Nhấn Phát / tiếp tục để thử lại.");
           sendValue("blocked");
         };
@@ -115,7 +130,8 @@
             pending.unshift(segment);
             blocked = true;
             playButton.hidden = false;
-              setStatus("Trình duyệt chặn tự động phát. Nhấn Phát / tiếp tục để nghe.");
+            syncButtons();
+            setStatus("Trình duyệt chặn tự động phát. Nhấn Phát / tiếp tục để nghe.");
             sendValue("blocked");
           });
         }
@@ -131,12 +147,20 @@
           knownIds = new Set();
           pending = [];
           finishedReported = false;
+          stoppedByUser = false;
           blocked = false;
           totalReceived = 0;
           totalPlayed = 0;
         }
 
         currentArgs = args;
+        if (stoppedByUser) {
+          playButton.hidden = true;
+          stopButton.hidden = true;
+          setStatus("Đã dừng đọc.");
+          return;
+        }
+
         const segments = Array.isArray(args.segments) ? args.segments : [];
         for (const segment of segments) {
           if (!segment || !segment.id || !segment.audio_b64 || knownIds.has(segment.id)) continue;
@@ -150,16 +174,33 @@
           playNext();
         } else if (pending.length > 0) {
           playButton.hidden = false;
+          syncButtons();
           setStatus(`Đã sẵn sàng ${totalPlayed}/${totalReceived} phần âm thanh.`);
         } else {
+          syncButtons();
           setStatus(args.is_complete ? `Đã đọc xong ${totalPlayed} phần âm thanh.` : "Đang chuẩn bị âm thanh…");
           reportFinishedIfReady();
         }
       }
 
       playButton.addEventListener("click", () => {
+        stoppedByUser = false;
         blocked = false;
         playNext();
+      });
+
+      stopButton.addEventListener("click", () => {
+        stoppedByUser = true;
+        finishedReported = true;
+        if (currentAudio) {
+          currentAudio.pause();
+          currentAudio = null;
+        }
+        pending = [];
+        playButton.hidden = true;
+        stopButton.hidden = true;
+        setStatus("Đã dừng đọc.");
+        sendValue("stopped");
       });
 
 

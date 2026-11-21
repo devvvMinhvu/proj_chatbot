@@ -4,7 +4,7 @@ Hệ thống hỏi đáp, tìm kiếm kết hợp (SQLite FTS5 + PhoBERT/FAISS),
 
 ## Cấu trúc thư mục
 
-- `config/`: Đường dẫn tập trung và cấu hình hệ thống (`DATA_DIR`, `NEWS_JSONL_PATH`, `NEWS_DB_PATH`, `VECTOR_DB_DIR`, `TTS_CACHE_DIR`, đường dẫn các mô hình).
+- `config/`: Đường dẫn tập trung và cấu hình hệ thống (`DATA_DIR`, `NEWS_JSONL_PATH`, `NEWS_DB_PATH`, `VECTOR_DB_DIR`, `PIPER_MODELS_DIR`, đường dẫn các mô hình).
 - `crawler/`: Thu thập và hậu xử lý bài báo tiếng Việt từ VnExpress, Tuổi Trẻ và Tiền Phong (`config.py`, `http_client.py`, `extractor.py`, `sources.py`, `pipeline.py`, `process.py`, `postprocess.py`).
 - `database/`: Mô hình SQLAlchemy + FTS5 (`db.py`), truy vấn bài báo/chuyên mục/tìm kiếm toàn văn (`repository.py`) và nhập JSONL vào SQLite (`import_jsonl.py`).
 - `processing/`: Chia đoạn văn bản (`chunking.py`) và tóm tắt bài báo bằng ViT5 (`summarizer.py`).
@@ -15,7 +15,7 @@ Hệ thống hỏi đáp, tìm kiếm kết hợp (SQLite FTS5 + PhoBERT/FAISS),
   - `text_classifier.py` & `train_text_classifier.py`: Phân loại chuyên mục bài báo.
   - `intent_handler.py`: Bộ điều phối ý định hỗ trợ lọc báo/chuyên mục và ngữ cảnh nhiều lượt.
 - `rag/`: Truy xuất kết hợp SQLite FTS5 + FAISS và sinh câu trả lời Qwen2.5 (`pipeline.py`).
-- `voice/`: Nhận dạng giọng nói (`speech_to_text.py`), chuẩn bị văn bản đọc (`reading_text.py`), tổng hợp giọng nói Edge TTS có cache và fallback (`text_to_speech.py`, `tts_adapter.py`, `tts_background.py`).
+- `voice/`: Nhận dạng giọng nói (`speech_to_text.py`), chuẩn bị văn bản đọc (`reading_text.py`), tổng hợp giọng nói cục bộ Piper TTS không lưu đĩa với LRU cache trong RAM (`text_to_speech.py`, `tts_adapter.py`, `tts_background.py`, `models/piper/`).
 - `app.py`: Ứng dụng Streamlit hợp nhất (Văn bản / Nhấn để nói / Hội thoại rảnh tay, lọc chuyên mục & nguồn báo, hộp thoại đọc & tóm tắt bài báo).
 - `evaluate_all_models.py`: Đánh giá các thành phần (intent, category, retrieval, RAG, summarization).
 - `tests/`: Bộ kiểm thử đơn vị (`test_topic_search.py`, `test_tts_adapter_recovery.py`, `test_hybrid_search.py`).
