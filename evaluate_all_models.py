@@ -363,53 +363,19 @@ def component_rag() -> dict[str, Any]:
     return result
 
 
-def tokenize_for_rouge(text: str) -> list[str]:
-    # Vietnamese words are separated largely by spaces. This is a simple
-    # whitespace-like tokenizer for a consistent proxy evaluation.
-    return re.findall(r"\w+", (text or "").lower(), flags=re.UNICODE)
-
-
-def ngram_f1(reference: list[str], hypothesis: list[str], n: int) -> float:
-    if not reference or not hypothesis:
-        return 0.0
-    ref_grams = Counter(tuple(reference[i:i + n]) for i in range(len(reference) - n + 1))
-    hyp_grams = Counter(tuple(hypothesis[i:i + n]) for i in range(len(hypothesis) - n + 1))
-    overlap = sum((ref_grams & hyp_grams).values())
-    if overlap == 0:
-        return 0.0
-    precision = overlap / max(sum(hyp_grams.values()), 1)
-    recall = overlap / max(sum(ref_grams.values()), 1)
-    return 2 * precision * recall / (precision + recall) if precision + recall else 0.0
-
-
-def lcs_length(a: list[str], b: list[str]) -> int:
-    # Memory-efficient LCS for ROUGE-L.
-    previous = [0] * (len(b) + 1)
-    for token_a in a:
-        current = [0]
-        for j, token_b in enumerate(b, start=1):
-            if token_a == token_b:
-                current.append(previous[j - 1] + 1)
-            else:
-                current.append(max(previous[j], current[-1]))
-        previous = current
-    return previous[-1]
-
-
-def rouge_l_f1(reference: list[str], hypothesis: list[str]) -> float:
-    if not reference or not hypothesis:
-        return 0.0
-    common = lcs_length(reference, hypothesis)
-    precision = common / len(hypothesis)
-    recall = common / len(reference)
-    return 2 * precision * recall / (precision + recall) if precision + recall else 0.0
-
-
 def component_summarization(sample_count: int) -> dict[str, Any]:
     print_header("5/5 - TÓM TẮT VĂN BẢN: VIT5 (ROUGE SO VỚI SAPO LÀM MỐC THAM KHẢO)")
+    from evaluation.datasets import strip_reference_from_document
+    from evaluation.metrics import rouge_scores
     from processing.summarizer import summarize
 
     rows = read_jsonl(NEWS_JSONL_PATH)
+    # Crawled bodies begin with the sapo; drop that paragraph so the reference
+    # is not part of the model input (otherwise ROUGE is inflated).
+    for row in rows:
+        row["body"], _ = strip_reference_from_document(
+            safe_text(row.get("body")), safe_text(row.get("sapo"))
+        )
     eligible = [
         row for row in rows
         if safe_text(row.get("body"))
@@ -430,13 +396,8 @@ def component_summarization(sample_count: int) -> dict[str, Any]:
         started = time.perf_counter()
         summary = summarize(body)
         elapsed = time.perf_counter() - started
-        ref_tokens = tokenize_for_rouge(reference_text)
-        hyp_tokens = tokenize_for_rouge(summary)
-        scores = {
-            "rouge1_f1": ngram_f1(ref_tokens, hyp_tokens, 1),
-            "rouge2_f1": ngram_f1(ref_tokens, hyp_tokens, 2),
-            "rougeL_f1": rouge_l_f1(ref_tokens, hyp_tokens),
-        }
+        all_scores = rouge_scores(reference_text, summary)
+        scores = {key: all_scores[key] for key in ("rouge1_f1", "rouge2_f1", "rougeL_f1")}
         metrics.append({
             "title": title,
             "reference_chars": len(reference_text),
