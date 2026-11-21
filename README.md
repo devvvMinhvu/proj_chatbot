@@ -60,7 +60,8 @@ Hệ thống hỏi đáp, tìm kiếm kết hợp (SQLite FTS5 + PhoBERT/FAISS),
    python -m evaluation.summarization_benchmark --limit 200 --length-budget 40
    ```
    - Hệ thống (`--systems`): `lead` (Lead-k), `textrank`, `phobert` (PhoBERT centroid + MMR),
-     `vit5_app` (đúng pipeline ViT5 của ứng dụng: chia đoạn 400 từ rồi ghép tóm tắt),
+     `vit5_app` (đúng pipeline ViT5 của ứng dụng: chia đoạn 400 từ, tóm tắt 2 đoạn đầu rồi ghép;
+     cấu hình đọc trực tiếp từ `processing/summarizer.py`),
      `vit5` (ViT5 một lượt, 1024 token đầu), `mt5_xlsum` (mT5 XL-Sum, cần tải trước từ
      Hugging Face) hoặc `seq2seq:<đường dẫn/ID mô hình>` cho mô hình khác (ví dụ BARTpho).
    - Dữ liệu mặc định là `data/news.jsonl`, dùng sapo làm bản tóm tắt tham chiếu. Thân bài

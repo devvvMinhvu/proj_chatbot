@@ -371,5 +371,82 @@ class TestHybridSearchAndEdgeCases(unittest.TestCase):
         self.assertIn("VN-Index tăng 15 điểm", output)
 
 
+class TestDenseFilterAndFinanceEvidence(unittest.TestCase):
+    SWIFT_PAYMENTS = {
+        "article_id": "art-1",
+        "chunk_id": 0,
+        "title": "Hệ thống thanh toán quốc tế Swift cập nhật mới",
+        "sapo": "Ngân hàng áp dụng chuẩn mới",
+        "source": "vnexpress",
+        "category": "economy",
+        "url": "https://vnexpress.net/swift-1.html",
+        "text": "Giao dịch qua Swift đạt kỷ lục trong quý này.",
+    }
+
+    def test_entity_terms_detects_names_in_any_case(self):
+        self.assertEqual(rag.entity_terms("Tìm bài nhắc đến Mbappé"), {"mbappe"})
+        self.assertEqual(rag.entity_terms("tìm bài về taylor swift"), {"taylor", "swift"})
+        self.assertEqual(rag.entity_terms("Mưa lớn tại Nghệ An"), {"nghe", "an"})
+        self.assertEqual(rag.entity_terms("giá xăng tăng mạnh"), set())
+        self.assertEqual(rag.entity_terms("Tin kinh tế trên VnExpress"), set())
+
+    def test_lowercase_unknown_entity_still_returns_nothing(self):
+        with patch.object(rag, "search_fts_articles", return_value=[]), patch.object(
+            rag, "search_vectors", return_value=([0.9], [0], [self.SWIFT_PAYMENTS])
+        ):
+            results = rag.retrieve("tìm bài về taylor swift", candidate_k=10, top_k=5)
+
+        self.assertEqual(results, [])
+
+    def test_paraphrased_dense_hit_is_kept_but_ranked_below_lexical_match(self):
+        paraphrase = {
+            "article_id": "para-1",
+            "chunk_id": 0,
+            "title": "Hộ kinh doanh chật vật khi nhiên liệu đắt đỏ",
+            "sapo": "",
+            "source": "tuoitre",
+            "category": "economy",
+            "url": "https://tuoitre.vn/para-1.html",
+            "text": "Nhiều hộ kinh doanh phải cắt giảm chi tiêu vì nhiên liệu đắt đỏ.",
+        }
+        lexical = {
+            "article_id": "lex-1",
+            "chunk_id": 0,
+            "title": "Giá xăng tăng lần thứ ba liên tiếp",
+            "sapo": "",
+            "source": "vnexpress",
+            "category": "economy",
+            "url": "https://vnexpress.net/lex-1.html",
+            "text": "Người dân lo lắng khi giá xăng tăng.",
+        }
+        with patch.object(rag, "search_fts_articles", return_value=[]), patch.object(
+            rag, "search_vectors", return_value=([0.79, 0.78], [0, 1], [paraphrase, lexical])
+        ):
+            results = rag.retrieve("người dân lo lắng vì giá xăng tăng", candidate_k=10, top_k=5)
+
+        self.assertEqual([r["article_id"] for r in results], ["lex-1", "para-1"])
+
+    def _expressway_article(self, sentence: str) -> list[dict]:
+        return [
+            {
+                "title": "Cao tốc Bắc Nam được bổ sung ngân sách",
+                "texts": [f"Bộ Giao thông vận tải vừa có tờ trình. {sentence}"],
+            }
+        ]
+
+    def test_financial_evidence_accepts_any_topic(self):
+        question = "Ngân sách xây cao tốc Bắc Nam là bao nhiêu?"
+        self.assertTrue(rag.asks_for_financial_amount(question))
+        articles = self._expressway_article("Ngân sách cho cao tốc Bắc Nam là 120.000 tỷ đồng.")
+        self.assertTrue(rag.has_financial_evidence(question, articles))
+
+    def test_financial_evidence_rejects_unrelated_or_non_finance_sentences(self):
+        question = "Ngân sách xây cao tốc Bắc Nam là bao nhiêu?"
+        no_finance_word = self._expressway_article("Tuyến dài 1.000 km, đã thu 50 tỷ đồng phí.")
+        other_topic = self._expressway_article("Ngân sách cho bệnh viện là 20 tỷ đồng.")
+        self.assertFalse(rag.has_financial_evidence(question, no_finance_word))
+        self.assertFalse(rag.has_financial_evidence(question, other_topic))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

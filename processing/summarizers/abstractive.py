@@ -13,8 +13,10 @@ from processing.summarizers.extractive import _empty_cuda_cache
 class AppViT5Summarizer(Summarizer):
     """Exactly what the Streamlit app runs: ``processing.summarizer.summarize``.
 
-    The article is cut into 400-word chunks (50-word overlap), each chunk is
-    summarized by ViT5, and the chunk summaries are concatenated.
+    The article is cut into 400-word chunks (50-word overlap); only the first
+    ``MAX_SUMMARY_CHUNKS`` chunks are summarized by ViT5 in one batch and the
+    chunk summaries are joined. The settings reported by ``describe`` are read
+    from ``processing.summarizer`` so they always match the app.
     """
 
     name = "vit5_app"
@@ -26,17 +28,26 @@ class AppViT5Summarizer(Summarizer):
         return summarize(text)
 
     def describe(self) -> dict[str, Any]:
+        from processing import summarizer as app_summarizer
+
         return {
             **super().describe(),
             "model": "models/vit5_summarization",
-            "strategy": "400-word chunks (overlap 50), summaries concatenated",
-            "generation": {"num_beams": 4, "min_new_tokens": 20, "max_new_tokens": 120},
+            "strategy": (
+                f"first {app_summarizer.MAX_SUMMARY_CHUNKS} chunks of 400 words "
+                "(overlap 50), summarized in one batch, summaries joined"
+            ),
+            "max_summary_chunks": app_summarizer.MAX_SUMMARY_CHUNKS,
+            "max_input_tokens": app_summarizer.MAX_INPUT_TOKENS,
+            "generation": dict(app_summarizer.GENERATION_KWARGS),
         }
 
     def close(self) -> None:
-        from processing.summarizer import _get_summarizer_model
+        from processing import summarizer as app_summarizer
 
-        _get_summarizer_model.cache_clear()
+        app_summarizer._get_summarizer_model.cache_clear()
+        with app_summarizer._SUMMARY_CACHE_LOCK:
+            app_summarizer._SUMMARY_CACHE.clear()
         _empty_cuda_cache()
 
 

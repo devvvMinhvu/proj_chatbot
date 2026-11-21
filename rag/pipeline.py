@@ -79,8 +79,72 @@ def _folded_word_set(text: str) -> set[str]:
     return {tok for tok in tokens if len(tok) > 1}
 
 
+#: A Vietnamese syllable without diacritics: optional onset, a vowel nucleus, optional coda.
+_VIETNAMESE_SYLLABLE = re.compile(
+    r"(?:ngh|ng|nh|ch|gh|gi|kh|ph|qu|th|tr|[bcdghklmnprstvx])?"
+    r"[aeiouy]{1,3}"
+    r"(?:ch|ng|nh|[cmnpt])?"
+)
+
+#: Bonus added to a dense hit's rank score, scaled by the share of query keywords it contains.
+KEYWORD_COVERAGE_BONUS = 0.10
+
+
+def is_vietnamese_syllable(token: str) -> bool:
+    """True when a (diacritic-free or accented) token can be a single Vietnamese syllable."""
+    return bool(_VIETNAMESE_SYLLABLE.fullmatch(_fold_text(token)))
+
+
+def entity_terms(question: str) -> set[str]:
+    """Folded query keywords that look like names (people, places, brands).
+
+    A keyword counts as a name when it is capitalised in the question (other than
+    the first word) or cannot be a Vietnamese syllable at all, such as "mbappe" or
+    "swift". The second rule also catches names typed in lowercase.
+    """
+    keywords = set(get_keyword_list(question))
+    if not keywords:
+        return set()
+    publisher_words = {word for name in _PUBLISHER_NAMES for word in _fold_text(name).split()}
+    terms: set[str] = set()
+    words = re.findall(r"[0-9a-zA-ZÀ-ỹĐđ]+", question or "")
+    for position, word in enumerate(words):
+        lowered = word.lower()
+        if lowered not in keywords or word.isdigit():
+            continue
+        folded = _fold_text(word)
+        if folded in publisher_words:
+            continue
+        capitalised = position > 0 and word[0].isupper()
+        if capitalised or not is_vietnamese_syllable(word):
+            terms.add(folded)
+    return terms
+
+
+def keyword_coverage(question: str, item: dict[str, Any]) -> float:
+    """Share of the question's keywords that appear in a retrieved chunk (0.0 to 1.0)."""
+    query_keywords = {_fold_text(word) for word in get_keyword_list(question)}
+    if not query_keywords:
+        return 0.0
+    document_text = " ".join([item.get("title", ""), item.get("sapo", ""), item.get("text", "")])
+    return len(query_keywords & _folded_word_set(document_text)) / len(query_keywords)
+
+
+def has_entity_support(question: str, item: dict[str, Any]) -> bool:
+    """True when every name-like term of the question appears in the retrieved chunk."""
+    terms = entity_terms(question)
+    if not terms:
+        return True
+    document_text = " ".join([item.get("title", ""), item.get("sapo", ""), item.get("text", "")])
+    return terms <= _folded_word_set(document_text)
+
+
 def has_lexical_overlap(question: str, item: dict[str, Any]) -> bool:
-    """Kiểm tra kết quả retrieval có chia sẻ từ khóa chủ đề với câu hỏi hay không."""
+    """Kiểm tra kết quả retrieval có chia sẻ từ khóa chủ đề với câu hỏi hay không.
+
+    Áp dụng cho ứng viên FTS5. Ứng viên FAISS không bị loại theo từ khóa thông thường
+    (để giữ các kết quả diễn đạt khác), chỉ cần chứa đủ tên riêng (``has_entity_support``).
+    """
     query_keywords = {_fold_text(word) for word in get_keyword_list(question)}
     if not query_keywords:
         return True
@@ -220,14 +284,16 @@ def retrieve(
             rejected += 1
             continue
 
-        if not has_lexical_overlap(question, item):
+        # Names must match exactly; other keywords only affect ranking, so paraphrased
+        # chunks found by PhoBERT are kept.
+        if not has_entity_support(question, item):
             rejected += 1
             continue
 
         article_id = str(item.get("article_id") or "")
         faiss_article_ids.add(article_id)
 
-        base_score = float(score)
+        base_score = float(score) + KEYWORD_COVERAGE_BONUS * keyword_coverage(question, item)
         fts_hit = fts_by_id.get(article_id)
         if fts_hit is not None:
             base_score = max(base_score, float(fts_hit.get("similarity") or 0.72)) + 0.08
@@ -493,8 +559,26 @@ def asks_for_financial_amount(question: str) -> bool:
     )
 
 
+#: Folded words that only say "how much money"; they don't identify what the money is for.
+_FINANCE_QUERY_WORDS = {
+    "kinh", "phi", "chi", "ngan", "sach", "tong", "von", "muc", "dau", "tu",
+    "tien", "so", "ty", "trieu", "nghin", "dong", "vnd", "gia", "tri",
+    "bao", "nhieu", "thuc", "hien", "het", "mat", "ton",
+}
+
+FINANCE_NOT_FOUND_MESSAGE = (
+    "Tôi chưa tìm thấy bằng chứng đủ rõ trong các bài báo liên quan "
+    "để xác định khoản kinh phí được hỏi. Tôi không thể kết luận số tiền "
+    "từ dữ liệu hiện có."
+)
+
+
 def has_financial_evidence(question: str, articles: list[dict[str, Any]]) -> bool:
-    """Kiểm tra ngữ cảnh có bằng chứng rõ ràng về khoản kinh phí hay không."""
+    """Kiểm tra ngữ cảnh có bằng chứng rõ ràng về khoản kinh phí hay không.
+
+    Một câu được coi là bằng chứng khi có số tiền, từ chỉ kinh phí và ít nhất một
+    từ khóa chủ đề của câu hỏi (bỏ qua các từ chỉ tiền như "kinh phí", "bao nhiêu").
+    """
     amount_pattern = re.compile(
         r"\b\d[\d.,]*\s*"
         r"(?:tỷ|triệu|nghìn|ngàn)\s*(?:đồng|vnd)?\b"
@@ -509,10 +593,11 @@ def has_financial_evidence(question: str, articles: list[dict[str, Any]]) -> boo
         r"tổng\s+giá\s+trị",
         flags=re.IGNORECASE,
     )
-    topic_pattern = re.compile(
-        r"dự\s+án|vệ\s+sinh|học\s+đường",
-        flags=re.IGNORECASE,
-    )
+    topic_keywords = {
+        _fold_text(word)
+        for word in get_keyword_list(question)
+        if _fold_text(word) not in _FINANCE_QUERY_WORDS
+    }
 
     locations = extract_locations(question)
     folded_locations = [_fold_text(loc) for loc in locations]
@@ -534,7 +619,7 @@ def has_financial_evidence(question: str, articles: list[dict[str, Any]]) -> boo
                 continue
             if not finance_pattern.search(sentence):
                 continue
-            if not topic_pattern.search(sentence):
+            if topic_keywords and not topic_keywords & _folded_word_set(sentence):
                 continue
             return True
 
@@ -562,12 +647,7 @@ def ask(
     if asks_for_financial_amount(question) and not has_financial_evidence(question, articles):
         return {
             "question": question,
-            "answer": (
-                "Tôi chưa tìm thấy bằng chứng đủ rõ trong "
-                "các bài báo liên quan để xác định kinh phí "
-                "của dự án. Tôi không thể kết luận số tiền "
-                "từ dữ liệu hiện có."
-            ),
+            "answer": FINANCE_NOT_FOUND_MESSAGE,
             "sources": [
                 {
                     "source_number": i,

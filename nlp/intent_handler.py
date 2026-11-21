@@ -1253,15 +1253,12 @@ def _execute_turn_plan(
     articles = group_chunks_by_article(chunks)
     sources = _articles_to_sources(articles)
     if asks_for_financial_amount(effective_qa) and not has_financial_evidence(effective_qa, articles):
+        from rag.pipeline import FINANCE_NOT_FOUND_MESSAGE
+
         return {
             "kind": "answer",
             "intent": "question_answering",
-            "answer": (
-                "Tôi chưa tìm thấy bằng chứng đủ rõ trong "
-                "các bài báo liên quan để xác định kinh phí "
-                "của dự án. Tôi không thể kết luận số tiền "
-                "từ dữ liệu hiện có."
-            ),
+            "answer": FINANCE_NOT_FOUND_MESSAGE,
             "sources": sources,
             "selected_single": False,
         }

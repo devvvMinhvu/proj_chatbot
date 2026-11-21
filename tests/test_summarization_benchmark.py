@@ -348,6 +348,16 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual(examples[0].reference, "Hà Nội mưa")
 
 
+class AppViT5DescribeTests(unittest.TestCase):
+    def test_describe_matches_app_summarizer_settings(self):
+        from processing import summarizer as app_summarizer
+
+        info = build_summarizer("vit5_app").describe()
+        self.assertEqual(info["max_summary_chunks"], app_summarizer.MAX_SUMMARY_CHUNKS)
+        self.assertEqual(info["max_input_tokens"], app_summarizer.MAX_INPUT_TOKENS)
+        self.assertEqual(info["generation"], app_summarizer.GENERATION_KWARGS)
+
+
 class BenchmarkCliTests(unittest.TestCase):
     def test_end_to_end_with_extractive_systems(self):
         rows = [
