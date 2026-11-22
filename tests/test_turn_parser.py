@@ -75,6 +75,13 @@ class TurnParserTests(unittest.TestCase):
                 self.assertFalse(parse_turn(text, TODAY).yes_no)
         self.assertIn("chia tay", parse_turn("CLB Long An chia tay ai và bổ nhiệm ai thay thế?", TODAY).predicate_words)
 
+    def test_list_words_name_the_articles(self):
+        parsed = parse_turn("So sánh bài 1 và bài 2. Hãy ghi chủ đề riêng của mỗi bài.", TODAY)
+        self.assertEqual(parsed.item_refs, [1, 2])
+        self.assertTrue(parsed.refs_named)
+        self.assertNotIn("hãy", parsed.entity_words + parsed.topic_words)
+        self.assertFalse(parse_turn("Messi đã giành Quả Bóng Vàng lần thứ 8 chưa?", TODAY).refs_named)
+
 
 class ConversationStateTests(unittest.TestCase):
     def test_new_list_closes_opened_articles_and_keeps_pins(self):

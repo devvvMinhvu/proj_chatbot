@@ -48,6 +48,8 @@ class ParsedTurn:
     words: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     item_refs: list[int] = field(default_factory=list)
+    #: The item numbers follow a list word ("bài 1 và bài 2"), not another noun ("lần thứ 8").
+    refs_named: bool = False
     #: Item numbers in a negated or "instead of" clause ("không phải bài 2").
     excluded_refs: list[int] = field(default_factory=list)
     relative: str | None = None
@@ -73,6 +75,9 @@ class ParsedTurn:
     entity_words: list[str] = field(default_factory=list)
     #: Topic words that are verbs ("chia tay", "tham dự"): an article may say them differently.
     predicate_words: list[str] = field(default_factory=list)
+    #: Nouns right before a question word ("món gì", "tập mấy", "giải nào"): they say what
+    #: kind of answer is wanted, not what the question is about.
+    frame_words: list[str] = field(default_factory=list)
     is_question: bool = False
     #: A yes-or-no question ("Đúng hay sai: …", "Có phải … không?"): its details are claims.
     yes_no: bool = False
@@ -361,6 +366,12 @@ def parse_turn(text: str, today: date | None = None) -> ParsedTurn:
             consumed.update(range(start, after + 1))
         elif marked or _is_common_noun(previous_tag):
             (parsed.excluded_refs if negated[start] else parsed.item_refs).append(value)
+            if previous >= 0:
+                noun = words[previous]
+                named = lexicon.is_one_of(noun, item_nouns(), exact) or lexicon.is_one_of(
+                    noun.split()[0], item_nouns(), exact
+                )
+                parsed.refs_named = (parsed.refs_named or len(parsed.item_refs) <= 1) and named
             consumed.update(range(max(previous, 0), after))
         elif _is_common_noun(next_tag) or next_tag == "Np":
             parsed.count = value
@@ -441,7 +452,7 @@ def parse_turn(text: str, today: date | None = None) -> ParsedTurn:
     grammar = (
         lexicon.QUESTION_WORDS, lexicon.PLURAL_MARKERS, lexicon.ORDINAL_MARKERS,
         lexicon.NEGATORS, lexicon.STATEMENT_NEGATORS, lexicon.EXCLUSION_WORDS,
-        lexicon.CONTRAST_WORDS, lexicon.RECENT_MARKERS, *lexicon.RELATIVE_WORDS.values(),
+        lexicon.CONTRAST_WORDS, lexicon.RECENT_MARKERS, lexicon.IMPERATIVE_WORDS, *lexicon.RELATIVE_WORDS.values(),
     )
     for position, (word, tag) in enumerate(zip(words, tags)):
         if position in consumed or tag not in _CONTENT_TAGS or not _WORD.search(word):
@@ -467,6 +478,11 @@ def parse_turn(text: str, today: date | None = None) -> ParsedTurn:
             parsed.topic_nouns.append(lowered)
         elif tag.startswith("V"):
             parsed.predicate_words.append(lowered)
+        # A noun or verb right before a question word frames it ("món gì", "tổ chức nào").
+        if tag[:1] in {"N", "V"} and not is_name and position + 1 < len(words) and _match_phrase(
+            words, position + 1, lexicon.QUESTION_WORDS, exact
+        ):
+            parsed.frame_words.append(lowered)
     if parsed.date_from is None and not parsed.item_refs:
         for word in list(parsed.topic_words):
             start, end, matched = find_dates(word, today)

@@ -74,6 +74,13 @@ class TurnRecord:
     sources: list[dict[str, Any]] = field(default_factory=list)
     request: ListRequest | None = None
     max_sentences: int | None = None
+    #: Passages ("article#index") that the answer was taken from; a follow-up prefers them.
+    evidence: list[str] = field(default_factory=list)
+    #: List numbers of the articles answered from, when the user named them (a comparison).
+    positions: list[int] = field(default_factory=list)
+    #: (list number, article) of the articles last compared; questions "trong hai bài vừa
+    #: so sánh" stay within them until another comparison or list replaces them.
+    compared: list[tuple[int, dict[str, Any]]] = field(default_factory=list)
 
 
 def same_article(a: dict[str, Any] | None, b: dict[str, Any] | None) -> bool:
@@ -163,6 +170,13 @@ class ConversationState:
             # A question answered from several articles: they become the numbered list.
             self.set_list(sources, record.request)
         record.sources = list(sources)
+        # The same list as the outcome's: a streamed answer fills it as it is checked.
+        evidence = outcome.get("evidence")
+        record.evidence = evidence if isinstance(evidence, list) else []
+        record.positions = list(outcome.get("list_positions") or [])
+        # A turn without articles (a clarifying question) keeps the pair being compared.
+        carried = list(self.last.compared) if self.last is not None and not sources else []
+        record.compared = list(outcome.get("compared") or carried)
         self.last = record
 
     @classmethod

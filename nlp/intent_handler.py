@@ -39,6 +39,7 @@ from nlp.premise_check import (
 )
 from nlp.turn_parser import ParsedTurn, describe as describe_turn, parse_turn
 from processing.role_check import ROLE_VERBS
+from rag.evidence import Evidence, select_evidence, supported_by_text
 from processing.text_matching import accented_lower, matched_keywords
 
 
@@ -881,14 +882,23 @@ def _limit_sentences(text: str, max_sentences: int | None) -> str:
 
 
 def _checked_summary(summary: str | None, body: str, max_sentences: int | None) -> tuple[str, str]:
-    """Keep summary sentences whose names and numbers are in the article; respect the length.
+    """Keep summary sentences that the article's own sentences support; respect the length.
 
+    Each clause of a summary sentence must be supported by one sentence of the
+    article (or two in a row), with its numbers, names and their pairing intact.
     If no sentence survives, the article's opening sentences are used instead.
     Returns (summary, note for the reader).
     """
-    from processing.fact_check import keep_supported_sentences
+    from processing.fact_check import split_sentences_keep
 
-    kept, dropped = keep_supported_sentences((summary or "").strip(), body)
+    kept_sentences: list[str] = []
+    dropped = 0
+    for sentence in split_sentences_keep((summary or "").strip()):
+        if supported_by_text(sentence, body):
+            kept_sentences.append(sentence.strip())
+        else:
+            dropped += 1
+    kept = " ".join(kept_sentences)
     note = ""
     if dropped and kept:
         note = f"\n\n*(Đã lược {dropped} câu có tên hoặc số liệu không có trong bài.)*"
@@ -936,15 +946,31 @@ def _stays_on_article(
     for phrase in matched_keywords(list(ROLE_VERBS), question, exact=exact):
         role_words.update(phrase.split())
     claim_subject = parsed.yes_no and subject_in(parsed, text)
+    manner = _manner_words(parsed)
     for word in missing:
         if word in parsed.predicate_words or lexicon.is_one_of(word, lexicon.QUESTION_NOUNS, exact):
             continue
+        if word in manner:
+            continue  # "biết chính xác": how something is asked, not what about
         if set(word.split()) <= role_words:
             continue
         if claim_subject and word in parsed.entity_words:
             continue
         return False
     return True
+
+
+def _manner_words(parsed: ParsedTurn) -> set[str]:
+    """Adjectives that modify a verb or the question ("biết chính xác"), not a noun.
+
+    An adjective right after a noun belongs to the subject ("giá vàng" is not "giá"),
+    so a question about gold prices still leaves a fuel-price article.
+    """
+    manner: set[str] = set()
+    for index, (word, tag) in enumerate(zip(parsed.words, parsed.tags)):
+        if tag.startswith("A") and (index == 0 or not parsed.tags[index - 1].startswith("N")):
+            manner.add(accented_lower(word))
+    return manner
 
 
 def _premise_outcome(
@@ -978,12 +1004,14 @@ def _handle_target_article(
     preloaded_content: dict[str, Any] | None = None,
     stream_qa: bool = False,
     parsed: ParsedTurn | None = None,
+    prior: list[str] | None = None,
 ) -> dict[str, Any]:
     """Summarize, read or answer a question about one resolved article.
 
     ``action`` is "summary", "detail" or "qa"; without it the request wording decides.
     With ``parsed``, the claim of a yes-or-no question is checked against the
-    article before the model answers.
+    article before the model answers. Questions are answered from the article's
+    selected passages; ``prior`` are the passages of the previous answer.
     """
     content = preloaded_content or get_article_content(
         article_id=target.get("article_id"),
@@ -1028,6 +1056,15 @@ def _handle_target_article(
             answer = f"## Tóm tắt: {selected['title']}\n\n{summary}{check_note}{sapo_only_note}"
         return _outcome("summarization", answer, [selected], selected_single=True)
 
+    if action == "quote":
+        # The sentences that match the request, quoted with their citation.
+        context = _article_context(selected, content) or {**selected, "texts": [body_text]}
+        evidence = select_evidence(question, [context], parsed=parsed, prior=prior)
+        answer = evidence.extractive_reply()
+        outcome = _outcome("question_answering", answer, [selected], selected_single=True)
+        outcome["evidence"] = evidence.ids
+        return outcome
+
     if action == "detail":
         return _outcome(
             "article_detail",
@@ -1047,17 +1084,73 @@ def _handle_target_article(
         "url": selected.get("url", ""),
         "texts": [body_text],
     }
-    if stream_qa:
-        return {
-            "kind": "qa_stream",
-            "intent": "question_answering",
-            "stream": stream_answer(question, [article_ctx]),
-            "sources": [selected],
-            "selected_single": True,
-            "is_list": False,
-        }
-    answer = generate_answer(question, [article_ctx])
-    return _outcome("question_answering", answer, [selected], selected_single=True)
+    evidence = select_evidence(question, [article_ctx], parsed=parsed, prior=prior)
+    return _evidence_outcome(question, evidence, stream_qa=stream_qa, selected=selected)
+
+
+def _evidence_outcome(
+    question: str,
+    evidence: Evidence,
+    *,
+    stream_qa: bool,
+    selected: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The answer from selected passages: decided by them, or written by Qwen and checked.
+
+    ``selected`` is the open article when the question is about it alone; its
+    card stays the source even when no passage answers.
+    """
+    sources = [selected] if selected is not None else _articles_to_sources(evidence.articles)
+    single = selected is not None
+    decided: str | None = None
+    if not evidence.articles:
+        answer = (
+            "Bài viết không có câu nào trả lời trực tiếp câu hỏi này."
+            if single
+            else "Tôi không tìm thấy câu nào trong các bài báo tìm được trả lời câu hỏi này."
+        )
+        outcome = _outcome("question_answering", answer, sources if single else [], selected_single=single)
+    else:
+        decided = evidence.extractive_reply() if evidence.weak else evidence.partial_reply()
+        if decided is None and evidence.need.yes_no:
+            # Yes or no is answered by the article's sentences, not by a bare "Có".
+            decided = evidence.extractive_reply()
+        if decided is not None:
+            outcome = _outcome("question_answering", decided, sources, selected_single=single)
+        elif stream_qa:
+            outcome = {
+                "kind": "qa_stream",
+                "intent": "question_answering",
+                "stream": stream_answer(question, evidence.articles, evidence=evidence),
+                "sources": sources,
+                "selected_single": single,
+                "is_list": False,
+            }
+        else:
+            answer = generate_answer(question, evidence.articles, evidence=evidence)
+            outcome = _outcome("question_answering", answer, sources, selected_single=single)
+    # The passages the reply uses; for a streamed answer the list fills as it is checked.
+    if decided is not None and not evidence.cited:
+        evidence.cited.extend(evidence.ids)
+    outcome["evidence"] = evidence.cited
+    outcome["evidence_offered"] = evidence.ids
+    if evidence.positions:
+        outcome["list_positions"] = list(evidence.positions)
+    return outcome
+
+
+def _with_full_text(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Retrieved articles with their whole text, so passages keep their place in the article."""
+    out: list[dict[str, Any]] = []
+    for item in articles:
+        content = get_article_content(article_id=item.get("article_id"), url=item.get("url"))
+        context = _article_context(item, content)
+        if context is None:
+            out.append(item)
+            continue
+        context["similarity"] = item.get("similarity", 0.0)
+        out.append(context)
+    return out
 
 
 def _answer_from_articles(
@@ -1066,34 +1159,27 @@ def _answer_from_articles(
     *,
     stream_qa: bool,
     list_positions: list[int] | None = None,
+    parsed: ParsedTurn | None = None,
+    prior: list[str] | None = None,
+    carried_words: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Grounded answer over several articles (comparisons, follow-up questions).
+    """Grounded answer over several articles (archive questions, follow-ups, comparisons).
 
     With ``list_positions`` (articles the user named by number) the user's order is
-    kept and the question says which list number each source is; otherwise the
-    newest article comes first.
+    kept, each article answers from its own passages and is labelled with its list
+    number, and every one of them is represented. Otherwise the newest article
+    comes first and articles without a matching passage are left out.
     """
-    if list_positions:
-        # The list numbers the user wrote differ from the source labels; the titles
-        # tie each one to its article.
-        mapping = "; ".join(
-            f"[Nguồn {i}] là bài {position} trong danh sách, tiêu đề \"{ctx.get('title', '')}\""
-            for i, (position, ctx) in enumerate(zip(list_positions, contexts), start=1)
-        )
-        question = f"{question}\n({mapping}.)"
-    else:
+    if not list_positions:
         contexts = _order_by_date(contexts)
-    sources = _articles_to_sources(contexts)
-    if stream_qa:
-        return {
-            "kind": "qa_stream",
-            "intent": "question_answering",
-            "stream": stream_answer(question, contexts),
-            "sources": sources,
-            "selected_single": False,
-            "is_list": False,
-        }
-    return _outcome("question_answering", generate_answer(question, contexts), sources)
+    evidence = select_evidence(
+        question, contexts, parsed=parsed, prior=prior,
+        positions=list_positions, keep_every_article=bool(list_positions), carried_words=carried_words,
+    )
+    outcome = _evidence_outcome(question, evidence, stream_qa=stream_qa)
+    if evidence.positions and len(evidence.positions) > 1:
+        outcome["compared"] = list(zip(evidence.positions, evidence.articles))
+    return outcome
 
 
 # --- Resolving which article a message means -------------------------------------
@@ -1133,10 +1219,20 @@ def _resolve_targets(
         return [], "", None
 
     current = state.current_article()
+    if parsed.relative == "remaining":
+        return _remaining_article(state)
+
     if parsed.relative == "current":
         if current is not None:
             return [current], "", None
         last_was_answer = state.last is not None and state.last.intent == "question_answering"
+        if last_was_answer and state.last.sources:
+            cited = _cited_articles(state)
+            if len(cited) == 1:
+                return cited, "", None  # "bài vừa dẫn": the article the answer came from
+            if len(cited) > 1 and not parsed.is_question:
+                choices = "; ".join(f"{i}. {a.get('title', '')}" for i, a in enumerate(cited, start=1))
+                return [], "", f"Câu trả lời vừa rồi dẫn từ {len(cited)} bài: {choices}. Bạn muốn nói bài nào?"
         if items and not last_was_answer:
             return [items[0]], "", None
         return [], "", None  # the caller decides: follow-up question or "nothing selected"
@@ -1160,6 +1256,36 @@ def _resolve_targets(
     return [items[new_position]], "", None
 
 
+def _remaining_article(state: ConversationState) -> tuple[list[dict[str, Any]], str, str | None]:
+    """"Bài còn lại": of the articles last compared, the one the previous answer did not name.
+
+    After "bài nào nói về 60.000 người?" named article 9 of the pair 8 and 9, the
+    remaining article is 8. When that does not leave exactly one, the user is asked.
+    """
+    last = state.last
+    compared = list(last.compared) if last else []
+    if len(compared) >= 2:
+        named = {article_key(source) for source in last.sources}
+        rest = [article for _, article in compared if article_key(article) not in named]
+        if len(rest) == 1:
+            return rest, "", None
+        choices = " hay ".join(f"bài {position} (\"{article.get('title', '')}\")" for position, article in compared)
+        return [], "", f"Bạn muốn nói bài nào: {choices}?"
+    return [], "", "Chưa có hai bài nào vừa được so sánh nên chưa rõ \"bài còn lại\" là bài nào."
+
+
+def _cited_articles(state: ConversationState) -> list[dict[str, Any]]:
+    """Articles of the previous answer that its passages came from, in order."""
+    last = state.last
+    if last is None:
+        return []
+    keys = [pid.rsplit("#", 1)[0] for pid in last.evidence]
+    from rag.evidence import article_key
+
+    cited = [s for s in last.sources if article_key(s) in keys]
+    return cited or list(last.sources)
+
+
 def _targets_cover_topic(targets: list[dict[str, Any]], parsed: ParsedTurn) -> bool:
     """A number like "lần thứ 8" only points to an item when that item is about the question.
 
@@ -1179,7 +1305,15 @@ def _targets_cover_topic(targets: list[dict[str, Any]], parsed: ParsedTurn) -> b
     return False
 
 
+def _asks_for_quote(question: str) -> bool:
+    """"Hãy trích câu nêu số tiền": the article's own sentence is wanted."""
+    lowered = f" {accented_lower(question)} "
+    return any(f" {word} " in lowered for word in lexicon.QUOTE_WORDS)
+
+
 def _target_action(question: str, parsed: ParsedTurn, intent: str) -> str:
+    if _asks_for_quote(question):
+        return "quote"
     wants_summary, wants_detail = _wants_summary_or_detail(question, "")
     if wants_summary:
         return "summary"
@@ -1283,6 +1417,81 @@ def _run_list_request(request: ListRequest, *, concise_list: bool) -> dict[str, 
     )
 
 
+def _compared_articles(state: ConversationState) -> list[tuple[int, dict[str, Any]]]:
+    """(list number, article) of the articles the previous turn compared or kept comparing."""
+    last = state.last
+    if last is None or len(last.compared) < 2:
+        return []
+    return list(last.compared)
+
+
+def _within_compared(
+    question: str,
+    parsed: ParsedTurn,
+    compared: list[tuple[int, dict[str, Any]]],
+    *,
+    stream_qa: bool,
+) -> dict[str, Any]:
+    """A question about the articles just compared ("bài nào nói về 60.000 nhân viên?").
+
+    The articles that contain every name, number and noun of the question are named,
+    with the sentence that says it; when the question asks "bài nào", the others are
+    left out. Other questions are answered from the pair, each article on its own.
+    """
+    from rag.evidence import question_need
+
+    contexts: list[tuple[int, dict[str, Any]]] = []
+    for position, article in compared:
+        content = get_article_content(article_id=article.get("article_id"), url=article.get("url"))
+        context = _article_context(article, content)
+        if context is not None:
+            contexts.append((position, context))
+    need = question_need(question, parsed)
+    anchors = [
+        word for word, weight in need.keywords.items()
+        if weight >= 2.0 and not lexicon.is_one_of(word, lexicon.REQUEST_WORDS)
+    ]
+    asks_which = bool(re.search(r"(?<![\wÀ-ỹ])bài nào(?![\wÀ-ỹ])", accented_lower(question)))
+    if asks_which and anchors:
+        matching = [
+            (position, ctx) for position, ctx in contexts
+            if len(matched_keywords(anchors, " ".join([ctx["title"], ctx["sapo"], *ctx["texts"]]),
+                                    exact=parsed.exact_accents)) == len(set(anchors))
+        ]
+        if not matching:
+            names = ", ".join(f"bài {position}" for position, _ in contexts)
+            outcome = _outcome(
+                "question_answering",
+                f"Không bài nào trong các bài vừa so sánh ({names}) nhắc tới {' '.join(anchors)}.",
+                [ctx for _, ctx in contexts],
+            )
+            outcome["keeps_list"] = True
+            outcome["list_positions"] = [position for position, _ in contexts]
+            outcome["compared"] = compared
+            return outcome
+        evidence = select_evidence(
+            question, [ctx for _, ctx in matching], parsed=parsed,
+            positions=[position for position, _ in matching], keep_every_article=True,
+        )
+        lead = ", ".join(f"bài {position}" for position, _ in matching)
+        answer = f"Trong các bài vừa so sánh, {lead} nhắc tới điều này:\n\n" + evidence.quote(
+            evidence.best(limit=len(matching), per_article=1)
+        )
+        outcome = _outcome("question_answering", answer, evidence.articles)
+        outcome["evidence"] = evidence.cited
+        outcome["list_positions"] = list(evidence.positions or [])
+        outcome["keeps_list"] = True
+        outcome["compared"] = compared
+        return outcome
+    outcome = _answer_from_articles(
+        question, [ctx for _, ctx in contexts], stream_qa=stream_qa,
+        list_positions=[position for position, _ in contexts], parsed=parsed,
+    )
+    outcome["keeps_list"] = True
+    outcome["compared"] = compared
+    return outcome
+
+
 def _narrow_current_list(
     parsed: ParsedTurn,
     state: ConversationState,
@@ -1314,6 +1523,33 @@ def _narrow_current_list(
 # --- Questions ---------------------------------------------------------------------
 
 
+#: Words that ask about all the compared articles at once ("cả hai", "bài nào").
+_ACROSS_ARTICLES = ("cả hai", "cả ba", "mỗi bài", "hai bài", "các bài", "so sánh", "khác nhau", "giống nhau", "bài nào")
+
+
+def _carried_sources(question: str, parsed: ParsedTurn, state: ConversationState) -> list[tuple[int | None, dict[str, Any]]]:
+    """Articles of the previous answer that the question is still about, with their list numbers.
+
+    "Họ chiếm bao nhiêu phần trăm nhân lực của Microsoft?" after an answer from the
+    Microsoft article keeps that article: every subject word of the question is in
+    it. A name the article does not have is a new subject and starts a new search.
+    """
+    last = state.last
+    if last is None or last.intent != "question_answering" or not last.sources:
+        return []
+    positions = list(last.positions or [])
+    carried: list[tuple[int | None, dict[str, Any]]] = []
+    for index, source in enumerate(last.sources[:5]):
+        content = get_article_content(article_id=source.get("article_id"), url=source.get("url"))
+        context = _article_context(source, content)
+        if context is None:
+            continue
+        explicit = parsed.relative == "current" or parsed.refers_back
+        if explicit or _stays_on_article(question, parsed, source, content):
+            carried.append((positions[index] if index < len(positions) else None, context))
+    return carried
+
+
 def _follow_up_answer(
     question: str,
     parsed: ParsedTurn,
@@ -1321,37 +1557,52 @@ def _follow_up_answer(
     *,
     stream_qa: bool,
 ) -> tuple[dict[str, Any], list[str]]:
-    """Answer a question that points back to the previous turn ("dự án này ở tỉnh nào?")."""
+    """Answer a question that continues the previous answer ("dự án này ở tỉnh nào?").
+
+    The previous answer's articles answer it, preferring the passages that answered
+    before. After a comparison, a question that could be about either article and
+    names neither is asked back. When the carried articles have nothing on the
+    question and nothing pointed back explicitly, the archive is searched again.
+    """
     last = state.last
     previous_words = list(last.topic_words) if last else []
     own_words = list(parsed.topic_words)
     note = f"*(Hiểu là câu hỏi tiếp theo về: {' '.join(previous_words)})*\n\n" if previous_words else ""
-    llm_question = f"{question}\n(Câu hỏi trước đó: {last.question})" if last else question
+    prior = list(last.evidence) if last else []
+    explicit = parsed.relative == "current" or parsed.refers_back
 
-    contexts: list[dict[str, Any]] = []
-    for source in (last.sources if last else [])[:5]:
-        content = get_article_content(article_id=source.get("article_id"), url=source.get("url"))
-        ctx = _article_context(source, content)
-        if ctx is None:
-            continue
-        text = " ".join([ctx["title"], ctx["sapo"], *ctx["texts"]])
-        # "dự án này" names the previous subject explicitly: answer from its articles,
-        # even when the question words differ ("kinh phí" vs "tài trợ"). Without such a
-        # pointer, the earlier articles must contain the question's own words.
-        explicit_pointer = parsed.relative == "current" or parsed.refers_back
-        covered = len(matched_keywords(own_words, text, exact=parsed.exact_accents)) == len(set(own_words))
-        if explicit_pointer or not own_words or covered:
-            contexts.append(ctx)
-    if contexts:
-        outcome = _answer_from_articles(llm_question, contexts, stream_qa=stream_qa)
-        return _with_note(outcome, note), previous_words + own_words
+    carried = _carried_sources(question, parsed, state)
+    numbered = [(pos, ctx) for pos, ctx in carried if pos is not None]
+    asks_across = any(
+        re.search(rf"(?<![\wÀ-ỹ]){re.escape(words)}(?![\wÀ-ỹ])", accented_lower(question)) for words in _ACROSS_ARTICLES
+    )
+    if len(numbered) > 1 and not parsed.refers_to_list and not asks_across:
+        choices = " hay ".join(f"bài {pos} (\"{ctx['title']}\")" for pos, ctx in numbered)
+        answer = f"Câu hỏi này có thể nói về {choices}. Bạn muốn hỏi về bài nào?"
+        outcome = _outcome("question_answering", answer, [ctx for _, ctx in numbered])
+        outcome["keeps_list"] = True
+        outcome["list_positions"] = [pos for pos, _ in numbered]
+        outcome["evidence"] = prior
+        return outcome, previous_words
+    if carried:
+        contexts = [ctx for _, ctx in carried]
+        positions = [pos for pos, _ in carried] if all(pos is not None for pos, _ in carried) else None
+        outcome = _answer_from_articles(
+            question, contexts, stream_qa=stream_qa, list_positions=positions, parsed=parsed,
+            prior=prior, carried_words=previous_words,
+        )
+        if outcome.get("sources") or explicit:
+            return _with_note(outcome, note), previous_words + own_words
 
     expanded = " ".join(previous_words + own_words) or question
     chunks = retrieve(expanded)
     if not chunks:
         return _outcome("question_answering", "Tôi chưa tìm thấy bài báo phù hợp để trả lời câu hỏi này."), own_words
-    articles = group_chunks_by_article(chunks)
-    return _with_note(_answer_from_articles(llm_question, articles, stream_qa=stream_qa), note), previous_words + own_words
+    articles = _with_full_text(group_chunks_by_article(chunks))
+    outcome = _answer_from_articles(
+        question, articles, stream_qa=stream_qa, parsed=parsed, prior=prior, carried_words=previous_words,
+    )
+    return _with_note(outcome, note), previous_words + own_words
 
 
 def _question_answer(
@@ -1370,21 +1621,6 @@ def _question_answer(
             question, effective_qa, parsed, source=source, category=category,
             exclude_sources=exclude_sources, stream_qa=stream_qa,
         )
-    if not stream_qa:
-        ask_kwargs: dict[str, Any] = {}
-        if source is not None:
-            ask_kwargs["source"] = source
-        if category is not None:
-            ask_kwargs["category"] = category
-        if exclude_sources:
-            ask_kwargs["exclude_sources"] = list(exclude_sources)
-        result = ask(effective_qa, **ask_kwargs)
-        return _outcome(
-            "question_answering",
-            result.get("answer", "Chưa tạo được câu trả lời."),
-            result.get("sources", []) or [],
-        )
-
     retrieve_kwargs: dict[str, Any] = {}
     if source is not None:
         retrieve_kwargs["source"] = source
@@ -1395,8 +1631,8 @@ def _question_answer(
     chunks = retrieve(effective_qa, **retrieve_kwargs)
     if not chunks:
         return _outcome("question_answering", "Tôi chưa tìm thấy bài báo phù hợp để trả lời câu hỏi này.")
-    articles = group_chunks_by_article(chunks)
-    return _answer_from_articles(effective_qa, articles, stream_qa=True)
+    articles = _with_full_text(group_chunks_by_article(chunks))
+    return _answer_from_articles(effective_qa, articles, stream_qa=stream_qa, parsed=parsed)
 
 
 def _without_claim_details(parsed: ParsedTurn, names: list[str], numbers: list[str]) -> str:
@@ -1509,9 +1745,7 @@ def _yes_no_answer(
         selected["title"] = (content or {}).get("title") or item.get("title") or "Bài báo"
         answer = premise_reply(premise, selected["title"], found_any=False)
         return _outcome("question_answering", answer, [selected])
-    if stream_qa:
-        return _answer_from_articles(effective_qa, articles, stream_qa=True)
-    return _outcome("question_answering", generate_answer(effective_qa, articles), _articles_to_sources(articles))
+    return _answer_from_articles(effective_qa, _with_full_text(articles), stream_qa=stream_qa, parsed=parsed)
 
 
 # --- The turn ------------------------------------------------------------------------
@@ -1556,7 +1790,7 @@ def _several_targets(
                 contexts.append(ctx)
                 kept_positions.append(position)
         outcome = _answer_from_articles(
-            question, contexts, stream_qa=stream_qa, list_positions=kept_positions
+            question, contexts, stream_qa=stream_qa, list_positions=kept_positions, parsed=parsed
         )
     # The articles came from the shown list; that list stays numbered as it was.
     outcome["keeps_list"] = True
@@ -1612,8 +1846,13 @@ def _decide(
     targets, note, error = _resolve_targets(parsed, state)
     if error:
         return _outcome(intent, error), record
-    if targets and parsed.item_refs and not _targets_cover_topic(targets, parsed):
+    if targets and parsed.item_refs and not parsed.refs_named and not _targets_cover_topic(targets, parsed):
         targets, note = [], ""  # "lần thứ 8" in a question about something else
+    if not targets and _asks_for_quote(question):
+        cited = _cited_articles(state) if state.last and state.last.intent == "question_answering" else []
+        fallback = state.current_article() or (cited[0] if len(cited) == 1 else None)
+        if fallback is not None:
+            targets = [fallback]
     if targets:
         if len(targets) > 1:
             outcome = _several_targets(question, parsed, targets, intent, stream_qa=stream_qa)
@@ -1707,7 +1946,11 @@ def _decide(
             label = "Các bài tiếp theo" if repeated else "Lọc lại"
             return _with_note(outcome, f"*({label}: {merged.describe()})*\n\n"), record
 
-    # 3. Narrow the current list to a subject: "trong những bài này, chỉ lấy bài về Arsenal".
+    # 3. "Trong hai bài vừa so sánh, bài nào …?": the articles just compared, not the whole list.
+    compared = _compared_articles(state)
+    if parsed.refers_to_list and compared and (parsed.topic_nouns or parsed.is_question):
+        return _within_compared(question, parsed, compared, stream_qa=stream_qa), record
+    # Narrow the current list to a subject: "trong những bài này, chỉ lấy bài về Arsenal".
     if parsed.refers_to_list and parsed.topic_nouns and state.items:
         return _narrow_current_list(parsed, state, concise_list=concise_list), record
 
@@ -1726,9 +1969,13 @@ def _decide(
                 outcome = _handle_target_article(
                     question, current, "question_answering", action="qa",
                     preloaded_content=active_content, stream_qa=stream_qa, parsed=parsed,
+                    prior=list(last.evidence) if last else None,
                 )
                 return outcome, record
-        points_back = parsed.relative == "current" or parsed.refers_back or not parsed.topic_nouns
+        points_back = (
+            parsed.relative == "current" or parsed.refers_back or not parsed.topic_nouns
+            or bool(_carried_sources(question, parsed, state))
+        )
         if points_back and last is not None and last.topic_words:
             outcome, record.topic_words = _follow_up_answer(question, parsed, state, stream_qa=stream_qa)
             return outcome, record
@@ -1843,7 +2090,8 @@ def respond_on_article(
     handler_action, intent = mapping.get(action, mapping["summarize"])
     parsed = parse_turn(question)
     outcome = _handle_target_article(
-        question, article, intent, action=handler_action, stream_qa=stream_qa, parsed=parsed
+        question, article, intent, action=handler_action, stream_qa=stream_qa, parsed=parsed,
+        prior=list(state.last.evidence) if state.last else None,
     )
     record = TurnRecord(
         question=question,

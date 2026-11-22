@@ -176,7 +176,7 @@ class TestHybridSearchAndEdgeCases(unittest.TestCase):
             "article_id": "art-2",
             "title": "Bài thứ hai",
             "sapo": "Tóm tắt sapo",
-            "body": "Nội dung đầy đủ của bài báo thứ hai.",
+            "body": "Bản tóm tắt ngắn gọn. Nội dung đầy đủ của bài báo thứ hai.",
             "source": "tuoitre",
             "category": "economy",
             "published_at_display": "27/10/2026 09:00",
@@ -214,7 +214,7 @@ class TestHybridSearchAndEdgeCases(unittest.TestCase):
             "article_id": "art-active",
             "title": "Bài đang xem",
             "sapo": "Sapo bài đang xem",
-            "body": "Nội dung đầy đủ bài đang xem.",
+            "body": "Tóm tắt bài đang xem. Nội dung đầy đủ bài đang xem.",
             "source": "tuoitre",
         }
         with patch.object(handler, "predict_intent", return_value="summarization"), patch.object(
@@ -258,7 +258,7 @@ class TestHybridSearchAndEdgeCases(unittest.TestCase):
         fake_2 = {
             "article_id": "art-2",
             "title": "Bài 2",
-            "body": "Toàn văn bài hai.",
+            "body": "Tóm tắt bài hai. Toàn văn bài hai.",
             "source": "vnexpress",
         }
         with patch.object(handler, "predict_intent", return_value="summarization"), patch.object(
@@ -367,8 +367,9 @@ class TestHybridSearchAndEdgeCases(unittest.TestCase):
         with patch.object(rag.ollama, "chat", side_effect=ConnectionError("Ollama offline")):
             output = "".join(rag.stream_answer("VN-Index tăng bao nhiêu?", fake_articles))
 
-        self.assertIn("Thị trường chứng khoán hồi phục", output)
-        self.assertIn("VN-Index tăng 15 điểm", output)
+        # The passage that answers is quoted with its citation.
+        self.assertIn("Ollama", output)
+        self.assertIn("> VN-Index tăng 15 điểm trong phiên sáng. [Nguồn 1]", output)
 
 
 class TestDenseFilterAndFinanceEvidence(unittest.TestCase):

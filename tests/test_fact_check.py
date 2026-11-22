@@ -80,8 +80,10 @@ class PremiseAndRoleTests(unittest.TestCase):
         shown = self.shown(question, "Đúng. Tuần lễ Số được tổ chức ở Huế cho 700 đại biểu [Nguồn 1].", self.WEEK)
         self.assertNotIn("Đúng", shown)  # the verdict goes with the sentence it stood on
         self.assertNotIn("700 đại biểu", shown)
+        # A negative the passage does not state is not shown either: the article is quoted.
         shown = self.shown(question, "Sai. Bài không nhắc đến Huế; sự kiện diễn ra tại Quảng Ninh [Nguồn 1].", self.WEEK)
-        self.assertIn("Sai. Bài không nhắc đến Huế", shown)
+        self.assertNotIn("Sai", shown)
+        self.assertIn("> Tuần lễ Số 2026 diễn ra tại Quảng Ninh, dự kiến quy tụ 500 đại biểu. [Nguồn 1]", shown)
 
     def test_verdict_helpers(self):
         self.assertTrue(fact_check.is_verdict("Đúng."))

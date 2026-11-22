@@ -21,6 +21,7 @@ from nlp.conversation_state import ConversationState
 from nlp.keyword_stats import KEYWORD_STATS_PATH
 
 ARCHIVE = (date(2022, 11, 5), date(2026, 10, 27))
+SUMMARY = "Đây là câu tóm tắt thứ nhất. Đây là câu tóm tắt thứ hai. Đây là câu tóm tắt thứ ba."
 TODAY = date(2026, 11, 22)
 
 
@@ -33,7 +34,8 @@ def article(index: int, title: str, source: str = "vnexpress", category: str = "
         "category": category,
         "url": f"https://example.vn/{index}.html",
         "published_at": "2026-10-27 10:00:00",
-        "body": body or title,
+        # The stub summary is taken from the article, so its sentences are in the text.
+        "body": f"{body or title} {SUMMARY}",
     }
 
 
@@ -53,7 +55,6 @@ SON_LA = [
             body="Quỹ Hy vọng bàn giao 11 công trình vệ sinh học đường tại 6 xã của Sơn La, tổng tài trợ gần 3 tỷ đồng."),
 ]
 MBAPPE = [article(21, "Mbappe chạm mốc 100 bàn cho Real Madrid"), article(22, "Mbappe tăng tốc trong cuộc đua")]
-SUMMARY = "Đây là câu tóm tắt thứ nhất. Đây là câu tóm tắt thứ hai. Đây là câu tóm tắt thứ ba."
 # Shortened from the stored articles of the premise and role audit conversations.
 DIGITAL_WEEK = article(
     31, "Những diễn giả nổi bật tại Tuần lễ Số 2026", category="tech",
@@ -74,7 +75,26 @@ LONG_AN = article(
 )
 HUE_RAIN = article(33, "Huế cảnh báo mưa lớn, tăng nguy cơ lũ quét", source="tienphong", category="news",
                    body="Huế cảnh báo mưa lớn trong tuần này, 700 hộ dân cần sơ tán.")
-BY_ID = {item["article_id"]: item for item in LATEST + SON_LA + MBAPPE + [DIGITAL_WEEK, LONG_AN, HUE_RAIN]}
+MICROSOFT = article(
+    34, "Microsoft đề xuất 60.000 nhân viên tự nguyện nghỉ việc", category="tech",
+    body=(
+        "Ngày 26/10, Microsoft cho biết đang đề xuất với khoảng 60.000 nhân viên nghỉ việc tự nguyện kèm trợ cấp. "
+        "Con số này tương đương hơn 25% nhân lực toàn cầu của hãng."
+    ),
+)
+FUNDING = article(
+    35, "Khánh thành cụm 11 công trình vệ sinh đạt chuẩn ở Sơn La", category="news",
+    body=(
+        "Sáng 22/10, Quỹ Hy vọng cùng Opella Việt Nam và BW Industrial bàn giao cụm 11 công trình vệ sinh "
+        "học đường tại 6 xã, tổng tài trợ gần 3 tỷ đồng. "
+        "Trong đó, 10 công trình do Opella Việt Nam đồng hành. "
+        "Công trình còn lại do BW Industrial tài trợ."
+    ),
+)
+BY_ID = {
+    item["article_id"]: item
+    for item in LATEST + SON_LA + MBAPPE + [DIGITAL_WEEK, LONG_AN, HUE_RAIN, MICROSOFT, FUNDING]
+}
 
 
 class Backend:
@@ -121,8 +141,8 @@ class Backend:
             patch.object(handler, "retrieve", side_effect=self._record("retrieve", retrieve)),
             patch.object(handler, "group_chunks_by_article", side_effect=group),
             patch.object(handler, "stream_answer", side_effect=self._record(
-                "llm", lambda q, articles: iter([f"<answer from {len(articles)} articles>"]))),
-            patch.object(handler, "generate_answer", side_effect=self._record("llm", lambda q, a: "<answer>")),
+                "llm", lambda q, articles, **k: iter([f"<answer from {len(articles)} articles>"]))),
+            patch.object(handler, "generate_answer", side_effect=self._record("llm", lambda q, a, **k: "<answer>")),
             patch.object(handler, "_load_summarizer", return_value=self._record(
                 "summarize", lambda body, article_id=None: SUMMARY)),
             patch.object(handler, "get_archive_date_range", return_value=ARCHIVE),
@@ -379,9 +399,13 @@ class RetestConversations(ConversationTestCase):
         outcome = self.say("So sánh bài số 2 và bài số 5", classifier="article_detail")
         self.assertEqual(outcome["intent"], "question_answering")
         self.assertEqual(self.titles(outcome), [LATEST[1]["title"], LATEST[4]["title"]])
-        (args, _), = self.backend.called("llm")
-        self.assertIn(f"[Nguồn 1] là bài 2 trong danh sách, tiêu đề \"{LATEST[1]['title']}\"", args[0])
-        self.assertIn("[Nguồn 2] là bài 5 trong danh sách", args[0])
+        # Each article answers from its own passages, labelled with its list number.
+        (args, kwargs), = self.backend.called("llm")
+        evidence = kwargs["evidence"]
+        self.assertEqual(evidence.positions, [2, 5])
+        self.assertEqual([a["title"] for a in args[1]], [LATEST[1]["title"], LATEST[4]["title"]])
+        self.assertIn("Bài 2 trong danh sách", evidence.context())
+        self.assertEqual(outcome["list_positions"], [2, 5])
         self.assertEqual(len(self.state.items), len(LATEST))  # still the list of six
         # "ban đầu" describes the list; it does not veto the number.
         outcome = self.say("Bây giờ mở bài số 5 trong danh sách 6 tin ban đầu", classifier="article_detail")
@@ -478,11 +502,13 @@ class PremiseAndRoleConversations(ConversationTestCase):
         self.assertIn("dự kiến quy tụ 500 đại biểu", outcome["answer"])
         self.assertFalse(self.backend.called("retrieve") or self.backend.called("llm"))
 
-    def test_claim_the_article_contains_goes_to_the_model(self):
+    def test_claim_the_article_contains_is_answered_with_its_sentence(self):
+        # No bare "Có": the article's own sentence answers a yes-or-no question.
         self.open_article(DIGITAL_WEEK)
         outcome = self.say("Có phải Tuần lễ Số diễn ra tại Quảng Ninh không?", "question_answering")
         self.assertEqual(self.titles(outcome), [DIGITAL_WEEK["title"]])
-        self.assertTrue(self.backend.called("llm"))
+        self.assertIn("> Tuần lễ Số Quốc tế Việt Nam 2026 (VIDW 2026) diễn ra từ ngày 28 đến 30/10 tại Quảng Ninh.", outcome["answer"])
+        self.assertFalse(self.backend.called("llm"))
 
     def test_claim_about_another_subject_leaves_the_article(self):
         self.open_latest()
@@ -521,6 +547,134 @@ class PremiseAndRoleConversations(ConversationTestCase):
                 outcome = self.say(text, "question_answering")
                 self.assertEqual(self.titles(outcome), [LONG_AN["title"]])
                 self.assertFalse(self.backend.called("retrieve"))
+
+
+
+@unittest.skipUnless(KEYWORD_STATS_PATH.exists(), "run `python -m nlp.keyword_stats` first")
+class PassageFirstConversations(ConversationTestCase):
+    """Answers come from selected passages, and follow-ups keep the subject and its passages."""
+
+    def test_follow_up_keeps_the_article_and_its_passages(self):  # "Percentage in isolation"
+        self.backend.retrieve_articles = [MICROSOFT]
+        first = self.say("Microsoft đề xuất bao nhiêu nhân viên tự nguyện nghỉ việc?", "question_answering")
+        self.assertEqual(self.titles(first), [MICROSOFT["title"]])
+        self.assertTrue(first["evidence_offered"])
+        self.backend.retrieve_articles = [MBAPPE[0]]  # a new search would find something else
+        for text in ("Họ chiếm bao nhiêu phần trăm nhân lực toàn cầu của Microsoft?", "Tỷ lệ là bao nhiêu?"):
+            with self.subTest(text=text):
+                outcome = self.say(text, "question_answering")
+                self.assertEqual(self.titles(outcome), [MICROSOFT["title"]])
+                self.assertFalse(self.backend.called("retrieve"))
+                (_, kwargs), = self.backend.called("llm")
+                self.assertIn("hơn 25% nhân lực toàn cầu", kwargs["evidence"].context())
+
+    def test_explicit_subject_change_starts_a_new_search(self):
+        self.backend.retrieve_articles = [MICROSOFT]
+        self.say("Microsoft đề xuất bao nhiêu nhân viên tự nguyện nghỉ việc?", "question_answering")
+        self.backend.retrieve_articles = [LONG_AN]
+        outcome = self.say("Long An giành bao nhiêu điểm?", "question_answering")
+        self.assertTrue(self.backend.called("retrieve"))
+        self.assertEqual(self.titles(outcome), [LONG_AN["title"]])
+
+    def test_acceptance_count_is_not_documented(self):
+        self.backend.retrieve_articles = [MICROSOFT]
+        outcome = self.say("Có bao nhiêu nhân viên Microsoft đã chấp nhận nghỉ việc?", "question_answering")
+        self.assertIn("chỉ ghi nhận lời đề xuất", outcome["answer"])
+        self.assertIn("đề xuất với khoảng 60.000 nhân viên", outcome["answer"])
+        self.assertFalse(self.backend.called("llm"))
+
+    def test_quote_from_the_article_just_cited(self):
+        self.backend.retrieve_articles = [FUNDING]
+        self.say("Ai tài trợ 11 công trình vệ sinh ở Sơn La?", "question_answering")
+        self.backend.search_results = MBAPPE  # an unrelated search must not be opened
+        outcome = self.say("Hãy trích câu nêu số tiền trong bài vừa dẫn", "summarization")
+        self.assertEqual(self.titles(outcome), [FUNDING["title"]])
+        self.assertIn("> Sáng 22/10, Quỹ Hy vọng cùng Opella Việt Nam và BW Industrial", outcome["answer"])
+        self.assertIn("tổng tài trợ gần 3 tỷ đồng. [Nguồn 1]", outcome["answer"])
+        self.assertFalse(self.backend.called("search") or self.backend.called("llm"))
+
+    def test_yes_or_no_is_answered_with_the_sentences(self):
+        self.backend.retrieve_articles = [FUNDING]
+        outcome = self.say("Có phải BW Industrial tài trợ cả 11 công trình không?", "question_answering")
+        self.assertIn("Công trình còn lại do BW Industrial tài trợ.", outcome["answer"])
+        self.assertNotIn("Có.", outcome["answer"])
+        self.assertFalse(self.backend.called("llm"))
+
+    def test_ambiguous_follow_up_after_a_comparison_is_asked_back(self):
+        self.open_latest()
+        self.say("So sánh bài số 2 và bài số 5", classifier="question_answering")
+        outcome = self.say("Bài đó đăng lúc mấy giờ?", classifier="question_answering")
+        self.assertIn("Bạn muốn hỏi về bài nào?", outcome["answer"])
+        self.assertIn("bài 2", outcome["answer"])
+        self.assertIn("bài 5", outcome["answer"])
+        self.assertFalse(self.backend.called("llm"))
+        self.assertEqual(len(self.state.items), len(LATEST))  # the list is unchanged
+
+
+
+@unittest.skipUnless(KEYWORD_STATS_PATH.exists(), "run `python -m nlp.keyword_stats` first")
+class ComparisonAndContinuationScope(ConversationTestCase):
+    """Final acceptance cases: explicit comparisons, the pair just compared, thin follow-ups."""
+
+    def compare_pair(self) -> dict:
+        self.backend.latest_articles = [LONG_AN, MICROSOFT]
+        self.say("Tin tức mới nhất", classifier="latest_news")
+        return self.say("So sánh bài 1 và bài 2. Hãy ghi chủ đề riêng của mỗi bài.", classifier="semantic_search")
+
+    def test_explicit_comparison_is_not_a_search(self):
+        outcome = self.compare_pair()
+        self.assertEqual(self.titles(outcome), [LONG_AN["title"], MICROSOFT["title"]])
+        self.assertFalse(self.backend.called("search"))
+        (_, kwargs), = self.backend.called("llm")
+        self.assertEqual(kwargs["evidence"].positions, [1, 2])
+
+    def test_question_within_the_pair_just_compared(self):
+        self.compare_pair()
+        outcome = self.say("Trong hai bài vừa so sánh, bài nào nói về 60.000 nhân viên?", "question_answering")
+        self.assertIn("bài 2 nhắc tới", outcome["answer"])
+        self.assertIn("60.000 nhân viên", outcome["answer"])
+        self.assertEqual(self.titles(outcome), [MICROSOFT["title"]])
+        self.assertFalse(self.backend.called("search") or self.backend.called("retrieve"))
+        self.assertEqual(len(self.state.items), 2)  # the list is unchanged
+        outcome = self.say("Trong hai bài vừa so sánh, bài nào nói về Quả Bóng Vàng?", "question_answering")
+        self.assertIn("Không bài nào trong các bài vừa so sánh", outcome["answer"])
+        self.assertFalse(self.backend.called("search") or self.backend.called("retrieve"))
+
+    def test_the_remaining_article_of_the_pair(self):
+        self.compare_pair()
+        # Right after the comparison neither article was singled out: ask.
+        outcome = self.say("Bài còn lại cho biết HLV nào mới được bổ nhiệm?", "question_answering")
+        self.assertIn("Bạn muốn nói bài nào", outcome["answer"])
+        self.say("Trong hai bài vừa nêu, bài nào nói về 60.000 nhân viên?", "question_answering")
+        self.backend.retrieve_articles = MBAPPE
+        outcome = self.say("Bài còn lại cho biết HLV nào mới được bổ nhiệm?", "question_answering")
+        self.assertEqual(self.titles(outcome), [LONG_AN["title"]])
+        self.assertFalse(self.backend.called("retrieve") or self.backend.called("search"))
+        (_, kwargs), = self.backend.called("llm")
+        self.assertIn("HLV Huỳnh Ngọc San đã được chọn", kwargs["evidence"].context())
+
+    def open_digital_week(self) -> None:
+        self.backend.latest_articles = [*LATEST, DIGITAL_WEEK]
+        self.open_latest()
+        self.say(f"Đọc bài số {len(LATEST) + 1}", classifier="article_detail")
+        self.say("Tuần lễ Số diễn ra ở đâu?", "question_answering")
+
+    def test_thin_continuation_keeps_the_open_article(self):
+        self.open_digital_week()
+        self.backend.retrieve_articles = [HUE_RAIN]
+        outcome = self.say("Có biết chính xác số người đã đến sau khi sự kiện kết thúc không?", "question_answering")
+        self.assertEqual(self.titles(outcome), [DIGITAL_WEEK["title"]])
+        self.assertIn("chỉ nêu con số dự kiến", outcome["answer"])
+        self.assertIn("dự kiến quy tụ 500 đại biểu", outcome["answer"])
+        self.assertFalse(self.backend.called("retrieve") or self.backend.called("llm"))
+
+    def test_genuine_topic_change_leaves_the_open_article(self):
+        self.open_digital_week()
+        self.backend.retrieve_articles = [LONG_AN]
+        for text in ("Vì sao giá vàng tăng?", "Long An giành bao nhiêu điểm?"):
+            with self.subTest(text=text):
+                self.say(text, "question_answering")
+                self.assertTrue(self.backend.called("retrieve"))
 
 
 if __name__ == "__main__":

@@ -41,6 +41,8 @@ RELATIVE_WORDS = {
     "first": ("đầu tiên", "đầu"),
     "last": ("cuối", "cuối cùng"),
     "current": ("này", "đó", "ấy", "kia", "vừa rồi", "vừa xong", "trên"),
+    #: "bài còn lại": of the articles just compared, the one not just named.
+    "remaining": ("còn lại",),
 }
 PLURAL_MARKERS = ("những", "các")
 #: "vừa" + verb after a noun points back like "vừa rồi": "bài vừa đọc", "hai bài vừa nêu".
@@ -83,7 +85,100 @@ VERIFICATION_PHRASES = (
     "đúng là", "có thật", "phải chăng", "đúng chứ",
 )
 #: Nouns that frame a question instead of naming its subject ("con số dự kiến hay thực tế?").
-QUESTION_NOUNS = ("con số", "số liệu", "thông tin", "chi tiết", "nội dung", "điều", "việc")
+QUESTION_NOUNS = (
+    "con số", "số liệu", "thông tin", "chi tiết", "nội dung", "điều", "việc",
+    "tỷ lệ", "tỉ lệ", "phần trăm", "số lượng",
+)
+#: Ask for a quantity; the noun after them is what is counted ("bao nhiêu đại biểu").
+QUANTITY_WORDS = ("bao nhiêu", "mấy")
+#: Ask for a share ("bao nhiêu phần trăm nhân lực", "tỷ lệ").
+PERCENT_WORDS = ("phần trăm", "tỷ lệ", "tỉ lệ", "%")
+#: Ask for a person, a place, a time.
+PERSON_QUESTION_WORDS = ("ai",)
+PLACE_QUESTION_WORDS = ("ở đâu", "tại đâu", "đâu", "nơi nào", "tỉnh nào", "nước nào", "thành phố nào")
+TIME_QUESTION_WORDS = (
+    "khi nào", "bao giờ", "lúc nào", "ngày nào", "hôm nào", "tháng nào", "năm nào", "mấy giờ",
+)
+
+# --- What a statement commits to -------------------------------------------------
+
+#: Words that make a statement a plan, an offer or a prediction rather than a fact.
+#: An answer has to keep them: "dự kiến quy tụ 500 đại biểu" is not "500 đại biểu
+#: tham dự", "đề xuất với 60.000 nhân viên" is not "60.000 nhân viên nghỉ việc".
+MODALITY_MARKERS = {
+    "expected": ("dự kiến", "dự tính", "kế hoạch", "mục tiêu", "ước tính", "sẽ"),
+    "proposed": ("đề xuất", "đề nghị", "kiến nghị"),
+    "forecast": ("dự đoán", "dự báo", "nhận định", "kỳ vọng", "có thể", "đề cử", "ứng viên"),
+}
+#: Words that ask for, or state, what came of a plan, offer or prediction. A question
+#: about a number that uses a completed-action word ("đã", see ASPECT_MARKERS) or a
+#: precision word asks for the outcome too, whatever the article planned or offered.
+OUTCOME_MARKERS = {
+    "expected": ("thực tế", "thực sự"),
+    "proposed": ("chấp nhận", "đồng ý", "nhận lời", "được duyệt", "thông qua", "đăng ký"),
+    "forecast": ("kết quả chính thức", "chung cuộc", "chính thức"),
+}
+#: Ask for an exact figure; a planned or approximate one does not answer them.
+PRECISION_WORDS = ("chính xác", "cụ thể")
+#: The reply when an article states only the plan, offer or prediction that was asked about.
+MODALITY_REPLIES = {
+    "expected": "Bài viết chỉ nêu con số dự kiến; bài không nêu con số thực tế.",
+    "proposed": (
+        "Bài viết chỉ ghi nhận lời đề xuất; bài không nêu bao nhiêu người hay bao nhiêu "
+        "trường hợp đã chấp nhận."
+    ),
+    "forecast": "Bài viết chỉ nêu dự đoán; bài không nêu kết quả chính thức.",
+}
+#: Claims that an article leaves something out; only the passages can establish them.
+ABSENCE_PHRASES = (
+    "không nêu", "không đề cập", "không nhắc", "không có thông tin", "không cung cấp",
+    "chưa nêu", "chưa có thông tin", "không được nêu",
+)
+#: Ask for an amount of money; numbers in these units answer it.
+MONEY_WORDS = ("số tiền", "kinh phí", "bao nhiêu tiền", "tổng tài trợ", "giá trị", "chi phí")
+MONEY_UNITS = ("tỷ", "triệu", "nghìn", "ngàn", "đồng", "usd", "đô", "euro")
+#: Nouns that ask for a figure without "bao nhiêu" ("trích câu nêu số tiền").
+#: ("số" + a noun, "số khách", is read from the tagger; see rag.evidence.question_need.)
+QUANTITY_NOUNS = ("số tiền", "con số", "số liệu", "kinh phí", "số lượng")
+#: Ask for the article's own sentence ("Hãy trích câu nêu số tiền").
+QUOTE_WORDS = ("trích", "trích dẫn", "dẫn lại", "nguyên văn", "câu nào nêu", "câu nêu")
+#: Words that make a request polite or imperative ("Hãy ghi …"); never a name or a subject.
+IMPERATIVE_WORDS = ("hãy", "xin", "vui lòng", "làm ơn")
+#: Words of a request that say what to do with an article, not what it is about.
+REQUEST_WORDS = ("trích", "trích dẫn", "dẫn", "dẫn lại", "nguyên văn", "câu", "nêu", "bài", "đoạn", "hãy")
+#: Words before a number that make it approximate ("gần 3 tỷ", "hơn 25%", "khoảng 60.000").
+APPROXIMATE_MARKERS = ("gần", "khoảng", "hơn", "trên", "dưới", "ít nhất", "tối đa", "chừng", "xấp xỉ", "gần như")
+#: Whether something is done, under way or still to come; an answer keeps it
+#: ("đã hoàn tất bàn giao" is not "đang xem xét bàn giao").
+ASPECT_MARKERS = {
+    "done": ("đã", "vừa", "xong", "rồi"),
+    "ongoing": ("đang",),
+    "future": ("sẽ", "sắp", "chưa"),
+}
+#: Verbs that carry no claim of their own ("là", "có").
+LIGHT_VERBS = ("là", "có", "được", "bị", "cho")
+#: Which way an approximation points; an answer has to keep it ("hơn 25%" is not "khoảng 25%").
+APPROXIMATE_DIRECTIONS = {
+    "about": ("khoảng", "chừng", "xấp xỉ"),
+    "near": ("gần", "gần như"),
+    "over": ("hơn", "trên", "ít nhất"),
+    "under": ("dưới", "tối đa"),
+}
+#: A sentence that starts with these continues the previous one ("Con số này tương đương
+#: hơn 25% nhân lực của hãng"); "còn lại" anywhere does too ("Công trình còn lại do BW tài trợ").
+CONTINUATION_STARTS = (
+    "con số này", "con số đó", "việc này", "điều này", "đây", "đó", "trong đó", "ngoài ra",
+    "anh", "ông", "bà", "chị", "họ", "hãng", "công ty", "đội bóng", "sự kiện",
+)
+CONTINUATION_WORDS = ("còn lại",)
+#: A sentence that starts with these breaks the previous total down ("Trong đó, 10 công trình …").
+BREAKDOWN_STARTS = ("trong đó", "cụ thể", "bao gồm", "gồm")
+#: Words that stand for a name mentioned in the previous sentence.
+COREFERENCE_WORDS = ("hãng", "công ty", "họ", "anh", "ông", "bà", "chị", "đội", "này", "đó")
+#: "cả hai bài đều …": the claim has to hold in every article it cites.
+EVERY_WORDS = ("cả hai", "cả ba", "đều")
+#: Join names into one subject ("Opella Việt Nam và BW Industrial bàn giao 11 công trình").
+JOINING_WORDS = ("và", "cùng", "với", ",")
 #: Units that make a number a summary length ("một câu").
 SENTENCE_UNITS = ("câu",)
 

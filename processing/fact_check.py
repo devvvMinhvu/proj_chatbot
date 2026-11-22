@@ -53,6 +53,10 @@ def _number_forms(number: str) -> set[str]:
     return forms
 
 
+#: Public name: other checks compare numbers the same way.
+number_forms = _number_forms
+
+
 def numbers_in(text: str) -> set[str]:
     return set(_NUMBER.findall(strip_citations(text)))
 
