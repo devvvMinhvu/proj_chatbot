@@ -28,6 +28,13 @@ class FactCheckTests(unittest.TestCase):
     def test_sentence_initial_capital_is_not_a_name(self):
         self.assertEqual(fact_check.names_in("Tổng tài trợ gần 3 tỷ đồng."), set())
 
+    def test_dateline_glued_to_the_first_sentence(self):  # retest item 2
+        source = "Sơn LaSáng 22/10, Quỹ Hy vọng đã bàn giao 11 công trình vệ sinh."
+        self.assertEqual(fact_check.split_glued_words("Sơn LaSáng"), "Sơn La Sáng")
+        self.assertTrue(fact_check.check("Dự án ở Sơn LaĐã bàn giao 11 công trình.", source).supported)
+        self.assertTrue(fact_check.check("Dự án ở tỉnh Sơn La.", source).supported)
+        self.assertFalse(fact_check.check("Dự án ở Lai Châu.", source).supported)
+
     def test_unsupported_summary_sentences_are_dropped(self):
         kept, dropped = fact_check.keep_supported_sentences(
             "Kane đoạt giải ở tuổi 33. Messi về nhì ở Chicago. Kane rời Tottenham.", SOURCE

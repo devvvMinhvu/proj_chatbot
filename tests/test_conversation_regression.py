@@ -79,7 +79,8 @@ class Backend:
 
         def latest(limit=10, **filters):
             items = [a for a in LATEST if filters.get("source") in (None, a["source"])
-                     and filters.get("category") in (None, a["category"])]
+                     and filters.get("category") in (None, a["category"])
+                     and a["source"] not in (filters.get("exclude_sources") or ())]
             return items[:limit], len(items), len(items)
 
         def retrieve(question, **kwargs):
@@ -114,8 +115,9 @@ class Backend:
         return [(args, kwargs) for call_name, args, kwargs in self.calls if call_name == name]
 
 
-@unittest.skipUnless(KEYWORD_STATS_PATH.exists(), "run `python -m nlp.keyword_stats` first")
-class AuditConversations(unittest.TestCase):
+class ConversationTestCase(unittest.TestCase):
+    """Helpers: a fresh conversation over the stubbed backend."""
+
     def setUp(self) -> None:
         self.backend = Backend(self)
         self.backend.start()
@@ -139,6 +141,9 @@ class AuditConversations(unittest.TestCase):
     def open_latest(self) -> None:
         self.say("Tin tức mới nhất", classifier="latest_news")
 
+
+@unittest.skipUnless(KEYWORD_STATS_PATH.exists(), "run `python -m nlp.keyword_stats` first")
+class AuditConversations(ConversationTestCase):
     # --- Ordinals and positions --------------------------------------------------
 
     def test_ordinal_words_after_any_noun(self):  # audit "Ordinal variants"
@@ -301,6 +306,127 @@ class AuditConversations(unittest.TestCase):
         self.assertEqual(outcome["intent"], "question_answering")
         outcome = self.say("Bạn làm được gì?", classifier="introduction")
         self.assertEqual(outcome["intent"], "introduction")
+
+
+@unittest.skipUnless(KEYWORD_STATS_PATH.exists(), "run `python -m nlp.keyword_stats` first")
+class RetestConversations(ConversationTestCase):
+    """Conversations of the retest audit (commit 81c5f06) that failed before these fixes."""
+
+    # --- Dates (retest item 3) ----------------------------------------------------------
+
+    def test_two_dates_make_a_range_and_that_period_is_kept(self):
+        self.say("Tìm 3 tin thể thao từ ngày 21/10/2026 đến ngày 23/10/2026", classifier="latest_news")
+        (_, kwargs), = self.backend.called("latest")
+        self.assertEqual((kwargs["published_from"], kwargs["published_to"]), (date(2026, 10, 21), date(2026, 10, 23)))
+        self.assertEqual((kwargs.get("category"), kwargs.get("limit")), ("sports", 3))
+        # "trong khoảng đó" points back to the period; it does not open an article.
+        outcome = self.say("Chỉ lấy bài của Tiền Phong trong khoảng đó", classifier="article_detail")
+        self.assertEqual(outcome["intent"], "latest_news")
+        (_, kwargs), = self.backend.called("latest")
+        self.assertEqual(kwargs.get("source"), "tienphong")
+        self.assertEqual((kwargs["published_from"], kwargs["published_to"]), (date(2026, 10, 21), date(2026, 10, 23)))
+
+    def test_category_with_a_date_uses_the_dated_query(self):
+        self.say("Liệt kê bài báo thuộc chuyên mục thể thao ngày 26/10/2026", classifier="topic_search")
+        self.assertFalse(self.backend.called("category"))
+        (_, kwargs), = self.backend.called("latest")
+        self.assertEqual((kwargs.get("category"), kwargs["published_from"]), ("sports", date(2026, 10, 26)))
+
+    def test_dated_topic_search_filters_in_the_query(self):
+        self.say("Tìm tin về giá vàng ngày 18/09/2026", classifier="semantic_search")
+        (args, kwargs), = self.backend.called("latest_topic")
+        self.assertEqual((kwargs["published_from"], kwargs["published_to"]), (date(2026, 9, 18), date(2026, 9, 18)))
+        self.assertIn("vàng", args[0])
+
+    # --- Small talk and slot-only questions (item 4) ---------------------------------------
+
+    def test_question_with_only_a_date_after_a_greeting_is_a_list(self):
+        self.say("Xin chào", classifier="greeting")
+        outcome = self.say("Có tin gì mới ngày 27/10/2026?", classifier="question_answering")
+        self.assertEqual(outcome["intent"], "latest_news")
+        self.assertFalse(self.backend.called("retrieve"))
+        self.assertNotIn("Hiểu là câu hỏi tiếp theo", outcome["answer"])
+        self.say("Chỉ lấy đúng 2 tin công nghệ", classifier="topic_search")
+        (_, kwargs), = self.backend.called("latest")
+        self.assertEqual((kwargs.get("category"), kwargs.get("limit")), ("tech", 2))
+        self.assertEqual(kwargs["published_from"], date(2026, 10, 27))
+
+    # --- Several articles (items 3, 5, 6) ------------------------------------------------------
+
+    def test_comparison_keeps_the_users_order_and_the_list(self):
+        self.open_latest()
+        outcome = self.say("So sánh bài số 2 và bài số 5", classifier="article_detail")
+        self.assertEqual(outcome["intent"], "question_answering")
+        self.assertEqual(self.titles(outcome), [LATEST[1]["title"], LATEST[4]["title"]])
+        (args, _), = self.backend.called("llm")
+        self.assertIn(f"[Nguồn 1] là bài 2 trong danh sách, tiêu đề \"{LATEST[1]['title']}\"", args[0])
+        self.assertIn("[Nguồn 2] là bài 5 trong danh sách", args[0])
+        self.assertEqual(len(self.state.items), len(LATEST))  # still the list of six
+        # "ban đầu" describes the list; it does not veto the number.
+        outcome = self.say("Bây giờ mở bài số 5 trong danh sách 6 tin ban đầu", classifier="article_detail")
+        self.assertEqual(self.titles(outcome), [LATEST[4]["title"]])
+
+    def test_ordinals_joined_by_and_are_both_articles(self):
+        self.open_latest()
+        outcome = self.say("So sánh bài thứ hai và bài thứ ba trong danh sách", classifier="question_answering")
+        self.assertEqual(self.titles(outcome), [LATEST[1]["title"], LATEST[2]["title"]])
+
+    def test_each_requested_article_is_summarized(self):
+        self.open_latest()
+        outcome = self.say("Tóm tắt cả bài 2 và bài 3, mỗi bài một câu.", classifier="summarization")
+        self.assertEqual(outcome["intent"], "summarization")
+        self.assertEqual(self.titles(outcome), [LATEST[1]["title"], LATEST[2]["title"]])
+        self.assertIn("Bài 2 trong danh sách", outcome["answer"])
+        self.assertIn("Bài 3 trong danh sách", outcome["answer"])
+        self.assertEqual(outcome["answer"].count("thứ nhất."), 2)
+        self.assertNotIn("thứ hai.", outcome["answer"])
+
+    # --- Negation and exclusion (item 8) ---------------------------------------------------------
+
+    def test_negated_article_number_is_skipped(self):
+        self.open_latest()
+        for text, wanted in (
+            ("Tôi muốn đọc bài 3, không phải bài 2.", LATEST[2]),
+            ("Đọc bài thứ ba, đừng mở bài thứ hai.", LATEST[2]),
+            ("Mở bài số 2 thay cho bài số 1.", LATEST[1]),
+        ):
+            with self.subTest(text=text):
+                outcome = self.say(text, classifier="article_detail")
+                self.assertEqual(self.titles(outcome), [wanted["title"]])
+
+    def test_excluded_publisher_is_left_out(self):
+        for text, excluded in (
+            ("Tìm 3 bài về giá vàng, trừ VnExpress", "vnexpress"),
+            ("Tìm các bài về Arsenal nhưng không lấy bài của Tiền Phong", "tienphong"),
+        ):
+            with self.subTest(text=text):
+                self.say(text)
+                (_, kwargs), = self.backend.called("search")
+                self.assertEqual(kwargs.get("exclude_sources"), [excluded])
+                self.assertIsNone(kwargs.get("source"))
+
+    def test_all_publishers_and_the_list_just_shown(self):
+        self.backend.search_results = [LATEST[1], MBAPPE[0]]
+        self.say("Tìm bài báo về Mbappe trên Tuổi Trẻ")
+        self.say("Bỏ lọc theo báo, tìm trên tất cả các báo", classifier="semantic_search")
+        (_, kwargs), = self.backend.called("search")
+        self.assertIsNone(kwargs.get("source"))
+        self.say("Chỉ lấy hai bài của VnExpress", classifier="topic_search")
+        (_, kwargs), = self.backend.called("search")
+        self.assertEqual(kwargs.get("source"), "vnexpress")
+        self.assertEqual(len(self.state.items), 2)
+        # "hai bài vừa nêu" is the list just shown (item 10), not a new count.
+        outcome = self.say("Chỉ trong hai bài vừa nêu, bài nào nhắc tới Kane?", classifier="question_answering")
+        self.assertEqual(self.titles(outcome), [LATEST[1]["title"]])
+
+    # --- More of the same list (item 7) ------------------------------------------------------------
+
+    def test_other_articles_leave_out_the_ones_shown(self):
+        self.say("Cho tôi 3 tin mới nhất", classifier="latest_news")
+        outcome = self.say("Cho tôi ba bài khác, bỏ qua những bài vừa xem.", classifier="latest_news")
+        self.assertEqual(self.titles(outcome), [a["title"] for a in LATEST[3:6]])
+        (_, kwargs), = self.backend.called("latest")
+        self.assertEqual(kwargs.get("limit"), 6)
 
 
 if __name__ == "__main__":

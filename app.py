@@ -568,7 +568,7 @@ def render_sources(
                 st.session_state.expanded_history_message_id = message_key
                 if len(sources) > 1:
                     st.session_state.last_search_sources = sources
-                    st.session_state.conv_state.set_list(sources, None)
+                    st.session_state.conv_state.show_list(sources, None)
                 else:
                     st.session_state.active_article = sources[0]
                     st.session_state.conv_state.select(sources[0], "open")
@@ -798,7 +798,7 @@ def browse_filtered_news(*, speak_response: bool = False) -> None:
     if articles:
         st.session_state.last_search_sources = articles
         st.session_state.active_article = None
-        st.session_state.conv_state.set_list(
+        st.session_state.conv_state.show_list(
             articles, ListRequest(action="latest", source=src_slug, category=cat_slug)
         )
 
@@ -1067,8 +1067,9 @@ if st.session_state.pinned_article is not None:
             st.session_state.conv_state.unpin()
             st.rerun()
 
-# Contextual quick follow-up chips right above the input bar.
-focus_article = st.session_state.pinned_article or st.session_state.active_article
+# Contextual quick follow-up chips right above the input bar. They act on the most
+# recent selection (opened or pinned), the same article a typed "bài này" means.
+focus_article = st.session_state.conv_state.current_article()
 search_list = st.session_state.last_search_sources
 default_speak = selected_mode == MODES[2]
 

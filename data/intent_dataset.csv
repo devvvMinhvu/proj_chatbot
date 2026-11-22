@@ -160,3 +160,34 @@ Mở mục tin mới cập nhật,latest_news
 Đọc các tin vừa xuất bản,latest_news
 Tin tức được cập nhật gần đây,latest_news
 Xem những bài mới được đăng hôm nay,latest_news
+Mở bài số 4,article_detail
+Xem toàn văn bài thứ năm,article_detail
+Cho tôi đọc tin số 3,article_detail
+Mở kết quả thứ hai giúp tôi,article_detail
+Xem kết quả số 1,article_detail
+Đọc tin đầu tiên trong danh sách,article_detail
+Mở bài tiếp theo,article_detail
+Cho xem tin kế tiếp,article_detail
+Đọc lại bài vừa mở,article_detail
+Mở tin cuối,article_detail
+mo bai so 5,article_detail
+xem tin thu tu,article_detail
+Tóm tắt bài số 6,summarization
+Tóm tắt tin thứ tư,summarization
+Tóm tắt kết quả đầu tiên,summarization
+Tóm lược bài cuối trong danh sách,summarization
+Tóm tắt giúp tôi tin vừa đọc,summarization
+tom tat bai thu ba,summarization
+Rút gọn tin này trong hai câu,summarization
+Nêu ý chính của kết quả số 2,summarization
+Bài số 5 nói về sự kiện gì?,question_answering
+Tin thứ ba được đăng khi nào?,question_answering
+Kết quả thứ hai do báo nào đăng?,question_answering
+Trong tin này ai là nhân vật chính?,question_answering
+Bài vừa xem có nhắc đến số liệu nào không?,question_answering
+Bài cuối cùng nói về chuyện gì?,question_answering
+Tin mới nhất trừ báo Tuổi Trẻ,latest_news
+Cho tôi tin mới nhất trên tất cả các báo,latest_news
+Tin mới hôm nay nhưng không lấy bài của VnExpress,latest_news
+"Tìm bài về bóng đá, bỏ qua các bài vừa xem",semantic_search
+Tìm tin về lũ lụt ngoài báo Tiền Phong,semantic_search

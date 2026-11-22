@@ -27,7 +27,7 @@ from typing import Any, Callable
 
 from config import CATEGORY_DISPLAY, SOURCE_DISPLAY
 from nlp import lexicon
-from nlp.keyword_stats import get_keyword_stats
+from nlp.keyword_stats import get_keyword_stats, item_nouns
 from processing.text_matching import (
     accented_lower,
     contains_phrase,
@@ -48,14 +48,24 @@ class ParsedTurn:
     words: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     item_refs: list[int] = field(default_factory=list)
+    #: Item numbers in a negated or "instead of" clause ("không phải bài 2").
+    excluded_refs: list[int] = field(default_factory=list)
     relative: str | None = None
     refers_to_list: bool = False
+    #: A demonstrative after a noun that is not a list item ("dự án này", "khoảng đó"):
+    #: the message points back to the previous subject, not to an article.
+    refers_back: bool = False
+    #: "ba bài khác": items of the same list that were not shown yet.
+    wants_other: bool = False
     count: int | None = None
     max_sentences: int | None = None
     date_from: date | None = None
     date_to: date | None = None
     date_text: str = ""
     source: str | None = None
+    exclude_sources: list[str] = field(default_factory=list)
+    #: "tìm trên tất cả các báo": lift any publisher filter.
+    all_sources: bool = False
     category: str | None = None
     topic_words: list[str] = field(default_factory=list)
     #: Topic words that are nouns or names: a message with none brings no new subject.
@@ -66,7 +76,7 @@ class ParsedTurn:
     @property
     def has_slots(self) -> bool:
         """True when the message sets a filter, count, length or date."""
-        return any(
+        return self.all_sources or bool(self.exclude_sources) or any(
             value is not None
             for value in (self.source, self.category, self.count, self.max_sentences, self.date_from)
         )
@@ -88,7 +98,8 @@ def label_vocabulary() -> dict[str, dict[str, tuple[str, ...]]]:
     }
 
 
-def _find_label(text: str, kind: str) -> tuple[str | None, list[str]]:
+def _label_matches(text: str, kind: str) -> list[tuple[str, str]]:
+    """(slug, name as written in the vocabulary) for every label ``text`` mentions."""
     matches: list[tuple[str, str]] = []
     for slug, names in label_vocabulary()[kind].items():
         for name in names:
@@ -96,10 +107,46 @@ def _find_label(text: str, kind: str) -> tuple[str | None, list[str]]:
             if contains_phrase(words, text) or (len(words) == 1 and _contains_word(text, name)):
                 matches.append((slug, name))
                 break
+    return matches
+
+
+def _find_label(text: str, kind: str) -> tuple[str | None, list[str]]:
+    matches = _label_matches(text, kind)
     slugs = {slug for slug, _ in matches}
     if len(slugs) != 1:
         return None, []
     return matches[0][0], [name for _, name in matches]
+
+
+def _negated_positions(words: list[str], tags: list[str], exact: bool, is_question: bool) -> list[bool]:
+    """For each token: does a negation or exclusion earlier in its clause apply to it?
+
+    A clause ends at punctuation or a contrast word ("mà", "nhưng"). "không" and
+    "chưa" negate only in statements, since they end questions ("… không?").
+    """
+    negators = [*lexicon.NEGATORS, *lexicon.EXCLUSION_WORDS]
+    if not is_question:
+        negators += list(lexicon.STATEMENT_NEGATORS)
+    flags: list[bool] = []
+    negated = False
+    index = 0
+    while index < len(words):
+        length = _match_phrase(words, index, negators, exact)
+        if length:
+            negated = True
+            flags.extend([False] * length)
+            index += length
+            continue
+        if tags[index] == "F" or lexicon.is_one_of(words[index], lexicon.CONTRAST_WORDS, exact):
+            negated = False
+        flags.append(negated)
+        index += 1
+    return flags
+
+
+def _name_positions(words: list[str], name: str, exact: bool) -> list[int]:
+    target = [accented_lower(part) for part in _WORD.findall(name)]
+    return [i for i in range(len(words)) if _match_phrase(words, i, (" ".join(target),), exact)]
 
 
 def _contains_word(text: str, word: str) -> bool:
@@ -131,11 +178,13 @@ def find_dates(
     today: date | None = None,
     after_noun: "Callable[[str], bool] | None" = None,
 ) -> tuple[date | None, date | None, list[str]]:
-    """Date expressions in ``text``: the first one as a (from, to) range, and all matched words.
+    """Date expressions in ``text`` as one (from, to) range, and all matched words.
 
-    ``after_noun(matched)`` tells whether the match directly follows a common noun;
-    then a weekday-shaped match such as "thứ hai" is an item position ("tin thứ
-    hai"), not Monday.
+    Several dates make a range from the earliest to the latest ("từ 21/10 đến
+    23/10"). ``after_noun(matched)`` tells whether the match directly follows a
+    common noun; then a weekday-shaped match such as "thứ hai" is an item
+    position ("tin thứ hai"), not Monday. A match with digits needs a date
+    separator or a date unit, so "bài số 9 trong" is not a date.
     """
     from dateparser.search import search_dates
 
@@ -153,20 +202,24 @@ def find_dates(
         found.extend(batch)
         for matched, _ in batch:
             remaining = remaining.replace(matched, " ")
-    first: tuple[date, date] | None = None
+    exact = lexicon.has_accents(text)
+    ranges: list[tuple[date, date]] = []
     matched_texts: list[str] = []
     for matched, value in found:
         stripped = matched.strip()
         if re.fullmatch(r"[\d\s]+", stripped):
             continue  # a bare number ("2026", "3") is not a date
-        if re.fullmatch(r"thu\s+\S+", fold_text(stripped)) and after_noun and after_noun(stripped):
+        if re.search(r"\d", stripped) and not _DATE_SEPARATOR.search(stripped) and not any(
+            lexicon.is_one_of(word, lexicon.DATE_UNITS, exact) for word in _WORD.findall(stripped)
+        ):
+            continue  # "9 trong": a number next to a word, not a date
+        if fold_text(stripped).startswith("thu ") and after_noun and after_noun(stripped):
             continue  # "tin thứ hai" is the second item, not Monday
         matched_texts.append(stripped)
-        if first is None:
-            first = _date_range(stripped, value)
-    if first is None:
+        ranges.append(_date_range(stripped, value))
+    if not ranges:
         return None, None, matched_texts
-    return first[0], first[1], matched_texts
+    return min(start for start, _ in ranges), max(end for _, end in ranges), matched_texts
 
 
 # --- Tokens --------------------------------------------------------------------
@@ -214,10 +267,15 @@ def parse_turn(text: str, today: date | None = None) -> ParsedTurn:
     raw_words, raw_tags = tag_words(text)
 
     def after_noun(matched: str) -> bool:
-        first_word = matched.split()[0]
-        for position, word in enumerate(raw_words):
-            if position and same_start(word, first_word):
-                return _is_common_noun(raw_tags[position - 1])
+        """Does the matched date text start right after a common noun ("bài thứ ba")?"""
+        target = [accented_lower(part) for part in _WORD.findall(matched)][:2]
+        for position in range(1, len(raw_words)):
+            if _match_phrase(raw_words, position, (" ".join(target),), exact) or (
+                len(target) == 2 and same_start(raw_words[position], target[0])
+                and accented_lower(raw_words[position]) == " ".join(target)
+            ):
+                if _is_common_noun(raw_tags[position - 1]):
+                    return True
         return False
 
     parsed.date_from, parsed.date_to, date_texts = find_dates(text, today, after_noun)
@@ -226,17 +284,39 @@ def parse_turn(text: str, today: date | None = None) -> ParsedTurn:
     for matched in date_texts:
         working = working.replace(matched, " ")
 
-    parsed.source, source_names = _find_label(working, "source")
+    words, tags = tag_words(working)
+    parsed.words, parsed.tags = words, tags
+    consumed: set[int] = set()
+
+    # Questions (needed first: "không" negates only in statements).
+    stripped = text.strip()
+    found_words = _WORD.findall(stripped)
+    last_word = found_words[-1] if found_words else ""
+    parsed.is_question = bool(
+        stripped.endswith("?")
+        or any(_match_phrase(words, i, lexicon.QUESTION_WORDS, exact) for i in range(len(words)))
+        or (last_word and lexicon.is_one_of(last_word, lexicon.FINAL_QUESTION_PARTICLES, exact))
+    )
+    negated = _negated_positions(words, tags, exact, parsed.is_question)
+
+    # Publishers: a name in a negated clause is left out ("trừ VnExpress").
+    included: list[str] = []
+    source_names: list[str] = []
+    for slug, name in _label_matches(working, "source"):
+        source_names.append(name)
+        positions = _name_positions(words, name, exact)
+        if positions and all(negated[p] for p in positions):
+            parsed.exclude_sources.append(slug)
+        else:
+            included.append(slug)
+    parsed.source = included[0] if len(included) == 1 else None
     parsed.category, category_names = _find_label(working, "category")
     label_words = {
         accented_lower(word) for name in source_names + category_names for word in _WORD.findall(name)
     } | {accented_lower(name) for name in source_names + category_names}
 
-    words, tags = tag_words(working)
-    parsed.words, parsed.tags = words, tags
-    consumed: set[int] = set()
-
     # Numbers: item references, quantities and summary lengths.
+    count_noun: int | None = None
     index = 0
     while index < len(words):
         value, after, marked = _number_at(words, tags, index, exact)
@@ -256,52 +336,102 @@ def parse_turn(text: str, today: date | None = None) -> ParsedTurn:
             consumed.update(range(start, after + 1))
         elif previous_tag == "Np":
             pass  # part of a name: "Quả Bóng Vàng 2026"
+        elif not marked and _is_common_noun(previous_tag) and _is_common_noun(next_tag):
+            # Between two nouns the number counts the second: "danh sách 10 tin".
+            parsed.count = value
+            count_noun = after
+            consumed.update(range(start, after + 1))
         elif marked or _is_common_noun(previous_tag):
-            parsed.item_refs.append(value)
+            (parsed.excluded_refs if negated[start] else parsed.item_refs).append(value)
             consumed.update(range(max(previous, 0), after))
         elif _is_common_noun(next_tag) or next_tag == "Np":
             parsed.count = value
+            count_noun = after
             consumed.update(range(start, after + 1))
         index = max(after, index + 1)
 
-    # Relative positions and demonstratives after a noun ("bài kế tiếp", "dự án này").
+    # Positions and demonstratives after a noun. After a list item ("bài kế tiếp",
+    # "tin này", "bài vừa đọc") they select an article; after any other noun
+    # ("dự án này", "khoảng đó") they point back to the previous subject.
+    items = item_nouns()
     for position in range(1, len(words)):
-        if not _is_common_noun(tags[position - 1]):
+        noun_at = position - 1
+        if not _is_common_noun(tags[noun_at]):
             continue
-        for name, options in lexicon.RELATIVE_WORDS.items():
-            matched_len = _match_phrase(words, position, options, exact)
-            if not matched_len:
-                continue
-            plural = position >= 2 and lexicon.is_one_of(words[position - 2], lexicon.PLURAL_MARKERS, exact)
-            if name == "current" and plural:
-                parsed.refers_to_list = True
-            elif parsed.relative is None:
-                parsed.relative = name
-            consumed.update(range(position, position + matched_len))
-            break
+        noun = words[noun_at]
+        is_item = not items or any(
+            lexicon.is_one_of(form, items, exact) for form in (noun, noun.split()[0])
+        )
+        if is_item and lexicon.is_one_of(words[position], lexicon.OTHER_WORDS, exact):
+            parsed.wants_other = True  # "ba bài khác"
+            consumed.add(position)
+            continue
+        name, matched_len = None, 0
+        if (
+            lexicon.is_one_of(words[position], lexicon.RECENT_MARKERS, exact)
+            and position + 1 < len(words)
+            and tags[position + 1].startswith("V")
+        ):
+            name, matched_len = "current", 2  # "bài vừa đọc"
+        else:
+            for option_name, options in lexicon.RELATIVE_WORDS.items():
+                matched_len = _match_phrase(words, position, options, exact)
+                if matched_len:
+                    name = option_name
+                    break
+        if name is None:
+            continue
+        consumed.update(range(position, position + matched_len))
+        if not is_item:
+            if name == "current":
+                parsed.refers_back = True
+            continue
+        plural = noun_at >= 1 and (
+            lexicon.is_one_of(words[noun_at - 1], lexicon.PLURAL_MARKERS, exact) or count_noun == noun_at
+        )
+        if name == "current" and plural:
+            parsed.refers_to_list = True
+            if count_noun == noun_at:
+                parsed.count = None  # "hai bài vừa nêu" names the shown list, not a count
+        elif parsed.relative is None:
+            parsed.relative = name
 
-    # Questions.
-    stripped = text.strip()
-    last_word = _WORD.findall(stripped)[-1] if _WORD.findall(stripped) else ""
-    parsed.is_question = (
-        stripped.endswith("?")
-        or any(_match_phrase(words, i, lexicon.QUESTION_WORDS, exact) for i in range(len(words)))
-        or (last_word and lexicon.is_one_of(last_word, lexicon.FINAL_QUESTION_PARTICLES, exact))
-    )
+    # "tất cả các báo", "mọi nguồn": all publishers. Words of a question phrase are
+    # not a publisher noun: unaccented "moi bao nhieu" is "mới bao nhiêu", not "mọi báo".
+    question_tokens: set[int] = set()
+    for position in range(len(words)):
+        length = _match_phrase(words, position, lexicon.QUESTION_WORDS, exact)
+        question_tokens.update(range(position, position + length))
+    for position in range(len(words)):
+        length = _match_phrase(words, position, lexicon.ALL_WORDS, exact)
+        if not length:
+            continue
+        nxt = position + length
+        if nxt < len(words) and lexicon.is_one_of(words[nxt], lexicon.PLURAL_MARKERS, exact):
+            nxt += 1
+        if nxt < len(words) and nxt not in question_tokens and _match_phrase(words, nxt, lexicon.PUBLISHER_NOUNS, exact):
+            parsed.all_sources = True
+            consumed.update(range(position, nxt + 1))
+
+    # An article picked by number needs no date ("Bây giờ mở bài số 9").
+    if parsed.item_refs:
+        parsed.date_from = parsed.date_to = None
 
     # Topic words: everything left that is not a slot, a function word or a command word.
     stats = get_keyword_stats()
     seen: set[str] = set()
+    grammar = (
+        lexicon.QUESTION_WORDS, lexicon.PLURAL_MARKERS, lexicon.ORDINAL_MARKERS,
+        lexicon.NEGATORS, lexicon.STATEMENT_NEGATORS, lexicon.EXCLUSION_WORDS,
+        lexicon.CONTRAST_WORDS, lexicon.RECENT_MARKERS, *lexicon.RELATIVE_WORDS.values(),
+    )
     for position, (word, tag) in enumerate(zip(words, tags)):
         if position in consumed or tag not in _CONTENT_TAGS or not _WORD.search(word):
             continue
         lowered = accented_lower(word)
         if lowered in label_words or lowered in seen:
             continue
-        if any(lexicon.is_one_of(word, group, exact) for group in (
-            lexicon.QUESTION_WORDS, lexicon.PLURAL_MARKERS, lexicon.ORDINAL_MARKERS,
-            *lexicon.RELATIVE_WORDS.values(),
-        )):
+        if any(lexicon.is_one_of(word, group, exact) for group in grammar):
             continue
         sentence_start = position == 0 or tags[position - 1] == "F"
         is_name = tag == "Np" or (not sentence_start and word[:1].isupper()) or any(
@@ -317,7 +447,7 @@ def parse_turn(text: str, today: date | None = None) -> ParsedTurn:
         parsed.topic_words.append(lowered)
         if tag.startswith("N") or is_name:
             parsed.topic_nouns.append(lowered)
-    if parsed.date_from is None:
+    if parsed.date_from is None and not parsed.item_refs:
         for word in list(parsed.topic_words):
             start, end, matched = find_dates(word, today)
             if start is not None:
@@ -358,12 +488,17 @@ def describe(parsed: ParsedTurn) -> dict[str, Any]:
         key: value
         for key, value in {
             "item_refs": parsed.item_refs,
+            "excluded_refs": parsed.excluded_refs,
             "relative": parsed.relative,
             "refers_to_list": parsed.refers_to_list,
+            "refers_back": parsed.refers_back,
+            "wants_other": parsed.wants_other,
             "count": parsed.count,
             "max_sentences": parsed.max_sentences,
             "date": (parsed.date_from, parsed.date_to) if parsed.date_from else None,
             "source": parsed.source,
+            "exclude_sources": parsed.exclude_sources,
+            "all_sources": parsed.all_sources,
             "category": parsed.category,
             "topic_words": parsed.topic_words,
             "is_question": parsed.is_question,

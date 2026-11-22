@@ -24,6 +24,22 @@ def strip_citations(text: str) -> str:
     return _CITATION.sub(" ", text or "")
 
 
+def split_glued_words(text: str) -> str:
+    """Put a space where a lowercase letter is followed by a capital: "Sơn LaSáng" -> "Sơn La Sáng".
+
+    The crawler glued each article's dateline to its first sentence, and the model
+    copies that ("Sơn LaĐã"). Both the source and the generated text are split
+    the same way, so names like "VnExpress" still match ("Vn Express" on both sides).
+    """
+    chars = list(text or "")
+    out: list[str] = []
+    for index, char in enumerate(chars):
+        if index and char.isupper() and chars[index - 1].islower():
+            out.append(" ")
+        out.append(char)
+    return "".join(out)
+
+
 def _number_forms(number: str) -> set[str]:
     """Spellings that count as the same number: "43.000", "43,000", "43000"; "3,5" and "3.5"."""
     forms = {number, number.replace(",", "."), number.replace(".", ",")}
@@ -51,7 +67,7 @@ def names_in(text: str) -> set[str]:
     Sentence-initial capitals are ignored. Returns lowercased, accent-free names.
     """
     names: set[str] = set()
-    for sentence in _SENTENCE_END.split(strip_citations(text)):
+    for sentence in _SENTENCE_END.split(split_glued_words(strip_citations(text))):
         words = _WORD.findall(sentence)
         for position, word in enumerate(words):
             if word.isdigit():
@@ -81,7 +97,9 @@ def check(text: str, source: str, allowed: str = "") -> FactCheck:
     """
     known_numbers = _source_numbers(source) | _source_numbers(allowed)
     missing_numbers = [n for n in sorted(numbers_in(text)) if not (_number_forms(n) & known_numbers)]
-    known_words = {fold_text(w) for w in _WORD.findall(accented_lower(f"{source} {allowed}"))}
+    known_words = {
+        fold_text(w) for w in _WORD.findall(accented_lower(split_glued_words(f"{source} {allowed}")))
+    }
     missing_names = [name for name in sorted(names_in(text)) if name.lower() not in known_words]
     return FactCheck(missing_numbers, missing_names)
 

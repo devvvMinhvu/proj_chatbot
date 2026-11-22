@@ -222,6 +222,55 @@ def conversation_words(path: Path = INTENT_DATASET_PATH) -> frozenset[str]:
     return frozenset(word for word, count in counts.items() if count >= 2)
 
 
+_COMMON_NOUN_TAGS = {"N", "Nc", "Nu", "Ny", "Nb"}
+
+
+@lru_cache(maxsize=1)
+def item_nouns(path: Path = INTENT_DATASET_PATH) -> frozenset[str]:
+    """Nouns that name an item of a shown list ("bài", "tin", "kết quả"…).
+
+    Learned from the intent examples: a common noun counts when, in at least two
+    examples, it comes right before a number ("bài 2"), an ordinal ("tin thứ
+    hai"), a position or demonstrative ("bài cuối", "bài này") or "vừa" + verb
+    ("bài vừa đọc"). Only these nouns select articles; "khoảng đó" or "dự án này"
+    point back to the previous subject instead.
+    """
+    from pyvi import ViPosTagger, ViTokenizer
+
+    from nlp import lexicon
+
+    pointers = [
+        *lexicon.ORDINAL_MARKERS,
+        *lexicon.RECENT_MARKERS,
+        *(word for options in lexicon.RELATIVE_WORDS.values() for word in options),
+    ]
+    counts: Counter[str] = Counter()
+    if path.exists():
+        with path.open(encoding="utf-8") as handle:
+            rows = [row.get("text") or "" for row in csv.DictReader(handle)]
+        for text in rows:
+            words, tags = ViPosTagger.postagging(ViTokenizer.tokenize(accented_lower(text)))
+            words = [word.replace("_", " ") for word in words]
+            exact = lexicon.has_accents(text)
+            found: set[str] = set()
+            for index in range(len(words) - 1):
+                if tags[index] not in _COMMON_NOUN_TAGS or lexicon.is_one_of(
+                    words[index], lexicon.ORDINAL_MARKERS, exact
+                ):
+                    continue
+                following = words[index + 1]
+                first_part = following.split()[0]
+                if (
+                    following.isdigit()
+                    or tags[index + 1] == "M"
+                    or lexicon.is_one_of(first_part, pointers, exact)
+                    or lexicon.is_one_of(following, pointers, exact)
+                ):
+                    found.add(words[index])
+            counts.update(found)
+    return frozenset(word for word, count in counts.items() if count >= 2)
+
+
 if __name__ == "__main__":
     built = build_stats()
     save_stats(built)

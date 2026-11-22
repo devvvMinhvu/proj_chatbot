@@ -252,8 +252,13 @@ def retrieve(
     max_chunks_per_article: int = 2,
     source: str | None = None,
     category: str | None = None,
+    exclude_sources: tuple[str, ...] | list[str] = (),
 ) -> list[dict[str, Any]]:
-    """Hybrid retrieval combining SQLite FTS5 BM25 and PhoBERT + FAISS vector search."""
+    """Hybrid retrieval combining SQLite FTS5 BM25 and PhoBERT + FAISS vector search.
+
+    ``exclude_sources`` leaves those publishers out of both searches.
+    """
+    excluded = {value.casefold() for value in exclude_sources or ()}
     keyword_list = get_keyword_list(question)
     locations = extract_locations(question)
     folded_locations = [_fold_text(loc) for loc in locations]
@@ -267,6 +272,7 @@ def retrieve(
             source=source,
             category=category,
             include_body=True,
+            **({"exclude_sources": tuple(exclude_sources)} if exclude_sources else {}),
         )
         if keyword_list
         else []
@@ -300,6 +306,9 @@ def retrieve(
             rejected += 1
             continue
         if category and (item.get("category") or "").casefold() != category.casefold():
+            rejected += 1
+            continue
+        if excluded and (item.get("source") or "").casefold() in excluded:
             rejected += 1
             continue
 
@@ -733,10 +742,14 @@ def ask(
     question: str,
     source: str | None = None,
     category: str | None = None,
+    exclude_sources: tuple[str, ...] | list[str] = (),
 ) -> dict[str, Any]:
     """Run full hybrid RAG retrieval and grounded answer generation for a user question."""
     print("\nĐang tìm kiếm bài báo liên quan...")
-    chunks = retrieve(question, source=source, category=category)
+    retrieve_kwargs: dict[str, Any] = {"source": source, "category": category}
+    if exclude_sources:
+        retrieve_kwargs["exclude_sources"] = tuple(exclude_sources)
+    chunks = retrieve(question, **retrieve_kwargs)
 
     if not chunks:
         return {

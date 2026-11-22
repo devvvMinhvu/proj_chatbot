@@ -43,6 +43,30 @@ RELATIVE_WORDS = {
     "current": ("này", "đó", "ấy", "kia", "vừa rồi", "vừa xong", "trên"),
 }
 PLURAL_MARKERS = ("những", "các")
+#: "vừa" + verb after a noun points back like "vừa rồi": "bài vừa đọc", "hai bài vừa nêu".
+RECENT_MARKERS = ("vừa",)
+#: After a list item, asks for items not shown yet: "ba bài khác".
+OTHER_WORDS = ("khác",)
+
+# --- Negation, exclusion and scope ---------------------------------------------
+
+#: Negate what follows in the same clause ("không phải bài 2", "đừng mở bài 1").
+NEGATORS = ("không phải", "chứ không", "đừng", "chớ")
+#: Negators that are also question particles ("… không?"); they only negate in statements.
+STATEMENT_NEGATORS = ("không", "chẳng", "chưa")
+#: Leave out what follows ("trừ VnExpress", "thay cho bài 1").
+EXCLUSION_WORDS = ("trừ", "ngoại trừ", "ngoài", "thay cho", "thay vì")
+#: Start a new clause, so an earlier negation no longer applies ("không phải bài 1 mà là bài 2").
+CONTRAST_WORDS = ("mà", "nhưng", "chứ")
+#: "tất cả / mọi" + a publisher noun lifts the publisher filter ("tìm trên tất cả các báo").
+ALL_WORDS = ("tất cả", "mọi")
+PUBLISHER_NOUNS = ("báo", "tờ báo", "nguồn", "trang")
+
+# --- Dates ----------------------------------------------------------------------
+
+#: A date match with digits must contain a separator ("21/10") or one of these units;
+#: "9 trong" is not a date.
+DATE_UNITS = ("ngày", "tháng", "năm", "tuần", "hôm", "giờ")
 
 # --- Questions and summary length ----------------------------------------------
 

@@ -31,6 +31,9 @@ class ListRequest:
     date_from: date | None = None
     date_to: date | None = None
     question: str = ""
+    exclude_sources: list[str] = field(default_factory=list)
+    #: Articles already shown for this request ("ba bài khác"); they are left out.
+    skip: list[str] = field(default_factory=list)
 
     def describe(self) -> str:
         parts = list(self.topic_words)
@@ -38,7 +41,28 @@ class ListRequest:
             parts.append(f"chuyên mục {self.category}")
         if self.source:
             parts.append(f"báo {self.source}")
+        if self.exclude_sources:
+            parts.append("trừ báo " + ", ".join(self.exclude_sources))
+        if self.date_from:
+            if self.date_to and self.date_to != self.date_from:
+                parts.append(f"từ {self.date_from:%d/%m/%Y} đến {self.date_to:%d/%m/%Y}")
+            else:
+                parts.append(f"ngày {self.date_from:%d/%m/%Y}")
         return ", ".join(parts) or self.question or "tin mới nhất"
+
+    def same_filters(self, other: "ListRequest | None") -> bool:
+        """Same kind of list with the same subject and filters (the count may differ)."""
+        if other is None:
+            return False
+        keys = ("action", "topic_words", "source", "category", "date_from", "date_to")
+        return all(getattr(self, key) == getattr(other, key) for key in keys) and sorted(
+            self.exclude_sources
+        ) == sorted(other.exclude_sources)
+
+
+def article_key(article: dict[str, Any]) -> str:
+    """Identity of an article across lists: its id, else its URL, else its title."""
+    return str(article.get("article_id") or article.get("url") or article.get("title") or "")
 
 
 @dataclass
@@ -118,6 +142,12 @@ class ConversationState:
         else:
             self.empty_request = request
 
+    def show_list(self, items: list[dict[str, Any]], request: ListRequest | None) -> None:
+        """A new list on screen: opened articles are closed, pinned ones stay."""
+        self.set_list(items, request)
+        if items:
+            self.selections = [entry for entry in self.selections if entry[1] == "pin"]
+
     # --- Turns --------------------------------------------------------------------
 
     def record(self, record: TurnRecord, outcome: dict[str, Any]) -> None:
@@ -125,8 +155,10 @@ class ConversationState:
         if outcome.get("selected_single") and sources:
             self.select(sources[0], "open")
             record.target = sources[0]
+        elif outcome.get("keeps_list"):
+            pass  # articles picked from the shown list ("so sánh bài 2 và bài 9"): it stays as it was
         elif outcome.get("is_list"):
-            self.set_list(sources, record.request)
+            self.show_list(sources, record.request)
         elif sources:
             # A question answered from several articles: they become the numbered list.
             self.set_list(sources, record.request)

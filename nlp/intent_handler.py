@@ -30,7 +30,7 @@ from database.repository import (
     search_latest_topic_articles,
     search_topic_articles,
 )
-from nlp.conversation_state import ConversationState, ListRequest, TurnRecord
+from nlp.conversation_state import ConversationState, ListRequest, TurnRecord, article_key
 from nlp.intent_classifier import predict_intent
 from nlp.keyword_stats import conversation_words
 from nlp.turn_parser import ParsedTurn, describe as describe_turn, parse_turn
@@ -508,11 +508,14 @@ def _search_latest_topic_articles(
     limit: int = 10,
     source: str | None = None,
     category: str | None = None,
+    **filters: Any,
 ):
+    """``filters``: published_from, published_to, exclude_sources (applied in SQL)."""
     kwargs: dict[str, Any] = {
         "limit": limit,
         "session_factory": SessionLocal,
         "article_model": Article,
+        **filters,
     }
     if source is not None:
         kwargs["source"] = source
@@ -525,6 +528,7 @@ def _search_topic_articles(
     category: str,
     limit: int = 10,
     source: str | None = None,
+    exclude_sources: list[str] | None = None,
 ):
     """Articles of one category, given as its database value (e.g. "sports")."""
     kwargs: dict[str, Any] = {
@@ -536,6 +540,8 @@ def _search_topic_articles(
     }
     if source is not None:
         kwargs["source"] = source
+    if exclude_sources:
+        kwargs["exclude_sources"] = list(exclude_sources)
     return search_topic_articles(**kwargs)
 
 
@@ -680,9 +686,10 @@ def _search_sources(
     question: str,
     source: str | None = None,
     category: str | None = None,
+    exclude_sources: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Truy xuất kết hợp FTS5 + PhoBERT/FAISS, gom chunk thành bài báo."""
-    cleaned_question = _strip_source_mentions(question) if source else question
+    cleaned_question = _strip_source_mentions(question) if (source or exclude_sources) else question
     kwargs: dict[str, Any] = {
         "candidate_k": 50,
         "top_k": 10,
@@ -692,6 +699,8 @@ def _search_sources(
         kwargs["source"] = source
     if category is not None:
         kwargs["category"] = category
+    if exclude_sources:
+        kwargs["exclude_sources"] = list(exclude_sources)
 
     chunks = retrieve(cleaned_question or question, **kwargs)
     articles = group_chunks_by_article(chunks)
@@ -1020,9 +1029,24 @@ def _answer_from_articles(
     contexts: list[dict[str, Any]],
     *,
     stream_qa: bool,
+    list_positions: list[int] | None = None,
 ) -> dict[str, Any]:
-    """Grounded answer over several articles (comparisons, follow-up questions)."""
-    contexts = _order_by_date(contexts)
+    """Grounded answer over several articles (comparisons, follow-up questions).
+
+    With ``list_positions`` (articles the user named by number) the user's order is
+    kept and the question says which list number each source is; otherwise the
+    newest article comes first.
+    """
+    if list_positions:
+        # The list numbers the user wrote differ from the source labels; the titles
+        # tie each one to its article.
+        mapping = "; ".join(
+            f"[Nguồn {i}] là bài {position} trong danh sách, tiêu đề \"{ctx.get('title', '')}\""
+            for i, (position, ctx) in enumerate(zip(list_positions, contexts), start=1)
+        )
+        question = f"{question}\n({mapping}.)"
+    else:
+        contexts = _order_by_date(contexts)
     sources = _articles_to_sources(contexts)
     if stream_qa:
         return {
@@ -1101,8 +1125,12 @@ def _resolve_targets(
 
 
 def _targets_cover_topic(targets: list[dict[str, Any]], parsed: ParsedTurn) -> bool:
-    """A number like "lần thứ 8" only points to an item when that item is about the question."""
-    if not parsed.topic_nouns:
+    """A number like "lần thứ 8" only points to an item when that item is about the question.
+
+    Only names can rule an item out ("Messi … lần thứ 4"); common nouns such as
+    "ban đầu" in "bài số 9 trong danh sách ban đầu" describe the list, not the article.
+    """
+    if not parsed.entity_words:
         return True
     for target in targets:
         content = get_article_content(article_id=target.get("article_id"), url=target.get("url")) or {}
@@ -1110,7 +1138,7 @@ def _targets_cover_topic(targets: list[dict[str, Any]], parsed: ParsedTurn) -> b
             str(value or "")
             for value in (target.get("title"), target.get("sapo"), content.get("title"), content.get("body"))
         )
-        if matched_keywords(parsed.topic_nouns, text, exact=parsed.exact_accents):
+        if matched_keywords(parsed.entity_words, text, exact=parsed.exact_accents):
             return True
     return False
 
@@ -1150,71 +1178,69 @@ def _date_note(request: ListRequest) -> tuple[ListRequest, str]:
     return request, ""
 
 
-def _in_date_range(article: dict[str, Any], request: ListRequest) -> bool:
-    if request.date_from is None:
-        return True
-    raw = str(article.get("published_at") or "")[:10]
-    try:
-        published = date.fromisoformat(raw)
-    except ValueError:
-        return False
-    return request.date_from <= published <= (request.date_to or request.date_from)
-
-
 def _run_list_request(request: ListRequest, *, concise_list: bool) -> dict[str, Any]:
-    """Produce a list of articles for a latest / topic / category / keyword request."""
+    """Produce a list of articles for a latest / topic / category / keyword request.
+
+    Dates and excluded publishers are applied in the database query. Articles in
+    ``request.skip`` (already shown) are left out, so "ba bài khác" gives new ones.
+    """
     request, note = _date_note(request)
     limit = request.count or 10
+    skip = set(request.skip)
+    fetch = limit + len(skip)
     words = request.topic_words
+    excluded = [value for value in request.exclude_sources if value != request.source]
 
-    if request.action == "latest" or (request.action in {"latest_topic", "search"} and not words):
-        latest_kwargs: dict[str, Any] = {}
-        for key, value in (
-            ("source", request.source),
-            ("category", request.category),
-            ("published_from", request.date_from),
-            ("published_to", request.date_to),
-        ):
-            if value is not None:
-                latest_kwargs[key] = value
-        articles, total_count, dated_count = _get_latest_news(limit=limit, **latest_kwargs)
+    def unseen(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [a for a in articles if article_key(a) not in skip][:limit]
+
+    def filters(*keys: str) -> dict[str, Any]:
+        values = {
+            "source": request.source,
+            "category": request.category,
+            "published_from": request.date_from,
+            "published_to": request.date_to,
+            "exclude_sources": excluded or None,
+        }
+        return {key: values[key] for key in keys if values[key] is not None}
+
+    dated_category = request.action == "category" and request.date_from is not None and not words
+    if (
+        request.action == "latest"
+        or dated_category
+        or (request.action in {"latest_topic", "search"} and not words)
+    ):
+        articles, total_count, dated_count = _get_latest_news(
+            limit=fetch,
+            **filters("source", "category", "published_from", "published_to", "exclude_sources"),
+        )
+        articles = unseen(articles)
         answer = _format_latest_news(articles, total_count, dated_count, concise=concise_list)
         return _with_note(_outcome("latest_news", answer, articles, is_list=True), note)
 
-    if request.action == "latest_topic":
-        topic_kwargs: dict[str, Any] = {}
-        if request.source is not None:
-            topic_kwargs["source"] = request.source
-        if request.category is not None:
-            topic_kwargs["category"] = request.category
+    # A dated keyword search uses the dated topic query: every match in the period,
+    # not only the best-ranked ones that happen to fall in it.
+    if request.action == "latest_topic" or (request.action == "search" and request.date_from is not None):
         articles, total_count, dated_count = _search_latest_topic_articles(
             words,
-            limit=limit if request.date_from is None else max(limit, 50),
-            **topic_kwargs,
+            limit=fetch,
+            **filters("source", "category", "published_from", "published_to", "exclude_sources"),
         )
-        if request.date_from is not None:
-            articles = [a for a in articles if _in_date_range(a, request)][:limit]
-            dated_count = total_count = len(articles)
+        articles = unseen(articles)
         answer = _format_latest_topic_search(words, articles, total_count, dated_count, concise=concise_list)
         return _with_note(_outcome("latest_topic_search", answer, articles, is_list=True), note)
 
     if request.action == "category" and not words and request.category:
-        category_kwargs: dict[str, Any] = {"source": request.source} if request.source else {}
         articles, total_count, category_found, available = _search_topic_articles(
-            request.category, limit=limit, **category_kwargs
+            request.category, limit=fetch, **filters("source", "exclude_sources")
         )
+        articles = unseen(articles)
         label = CATEGORY_DISPLAY.get(request.category, request.category)
         answer = _format_topic_search(label, articles, total_count, category_found, available, concise=concise_list)
         return _with_note(_outcome("topic_search", answer, articles, is_list=True), note)
 
     query = request.question or " ".join(words)
-    search_kwargs: dict[str, Any] = {}
-    if request.source is not None:
-        search_kwargs["source"] = request.source
-    if request.category is not None:
-        search_kwargs["category"] = request.category
-    sources = _search_sources(query, **search_kwargs)
-    sources = [s for s in sources if _in_date_range(s, request)][:limit]
+    sources = unseen(_search_sources(query, **filters("source", "category", "exclude_sources")))
     return _with_note(
         _outcome("semantic_search", _format_search_results(sources, concise=concise_list), sources, is_list=True),
         note,
@@ -1276,7 +1302,7 @@ def _follow_up_answer(
         # "dự án này" names the previous subject explicitly: answer from its articles,
         # even when the question words differ ("kinh phí" vs "tài trợ"). Without such a
         # pointer, the earlier articles must contain the question's own words.
-        explicit_pointer = parsed.relative == "current"
+        explicit_pointer = parsed.relative == "current" or parsed.refers_back
         covered = len(matched_keywords(own_words, text, exact=parsed.exact_accents)) == len(set(own_words))
         if explicit_pointer or not own_words or covered:
             contexts.append(ctx)
@@ -1299,8 +1325,9 @@ def _question_answer(
     source: str | None,
     category: str | None,
     stream_qa: bool,
+    exclude_sources: list[str] | None = None,
 ) -> dict[str, Any]:
-    clean_qa = _strip_source_mentions(question) if source else question
+    clean_qa = _strip_source_mentions(question) if (source or exclude_sources) else question
     effective_qa = clean_qa or question
     if not stream_qa:
         ask_kwargs: dict[str, Any] = {}
@@ -1308,6 +1335,8 @@ def _question_answer(
             ask_kwargs["source"] = source
         if category is not None:
             ask_kwargs["category"] = category
+        if exclude_sources:
+            ask_kwargs["exclude_sources"] = list(exclude_sources)
         result = ask(effective_qa, **ask_kwargs)
         return _outcome(
             "question_answering",
@@ -1320,6 +1349,8 @@ def _question_answer(
         retrieve_kwargs["source"] = source
     if category is not None:
         retrieve_kwargs["category"] = category
+    if exclude_sources:
+        retrieve_kwargs["exclude_sources"] = list(exclude_sources)
     chunks = retrieve(effective_qa, **retrieve_kwargs)
     if not chunks:
         return _outcome("question_answering", "Tôi chưa tìm thấy bài báo phù hợp để trả lời câu hỏi này.")
@@ -1328,6 +1359,59 @@ def _question_answer(
 
 
 # --- The turn ------------------------------------------------------------------------
+
+
+def _several_targets(
+    question: str,
+    parsed: ParsedTurn,
+    targets: list[dict[str, Any]],
+    intent: str,
+    *,
+    stream_qa: bool,
+) -> dict[str, Any]:
+    """Several articles named by number: summarize or read each, otherwise compare them.
+
+    The user's order is kept; each part says which list number it is.
+    """
+    wants_summary, wants_detail = _wants_summary_or_detail(question, "")
+    if parsed.max_sentences and not wants_detail:
+        wants_summary = True
+    positions = parsed.item_refs[: len(targets)]
+    if wants_summary or wants_detail:
+        parts: list[str] = []
+        sources: list[dict[str, Any]] = []
+        result_intent = "summarization" if wants_summary else "article_detail"
+        for position, target in zip(positions, targets):
+            part = _handle_target_article(
+                question, target, intent,
+                action="summary" if wants_summary else "detail",
+                max_sentences=parsed.max_sentences,
+            )
+            parts.append(f"**Bài {position} trong danh sách**\n\n{part['answer']}")
+            sources.extend(part.get("sources") or [target])
+        outcome = _outcome(result_intent, "\n\n---\n\n".join(parts), sources)
+    else:
+        contexts = []
+        kept_positions = []
+        for position, target in zip(positions, targets):
+            content = get_article_content(article_id=target.get("article_id"), url=target.get("url"))
+            ctx = _article_context(target, content)
+            if ctx is not None:
+                contexts.append(ctx)
+                kept_positions.append(position)
+        outcome = _answer_from_articles(
+            question, contexts, stream_qa=stream_qa, list_positions=kept_positions
+        )
+    # The articles came from the shown list; that list stays numbered as it was.
+    outcome["keeps_list"] = True
+    return outcome
+
+
+def _is_slots_only(parsed: ParsedTurn) -> bool:
+    """A message that only sets filters ("Có tin gì mới ngày 27/10?") asks for a list."""
+    return parsed.has_slots and not (
+        parsed.topic_nouns or parsed.entity_words or parsed.refers_back or parsed.relative
+    )
 
 
 def _decide(
@@ -1340,7 +1424,8 @@ def _decide(
     concise_list: bool,
     stream_qa: bool,
 ) -> tuple[dict[str, Any], TurnRecord]:
-    source = parsed.source or source_filter
+    source = None if parsed.all_sources else (parsed.source or source_filter)
+    exclude_sources = [value for value in parsed.exclude_sources if value != source]
     category = parsed.category or category_filter
     record = TurnRecord(
         question=question,
@@ -1350,11 +1435,13 @@ def _decide(
     )
     intent = predict_intent(question)
 
-    # Small talk: trusted only when the message has no topic of its own.
+    # Small talk: trusted only when the message has no topic of its own. It records
+    # no subject, so the next question is not read as a follow-up to "xin chào".
     small_talk_words = conversation_words()
     if intent in {"greeting", "introduction"} and all(
         word in small_talk_words for word in parsed.topic_words
     ) and not (parsed.item_refs or parsed.relative):
+        record.topic_words = []
         if intent == "greeting":
             answer = (
                 "Xin chào! Tôi là Trợ lý đọc báo thông minh. "
@@ -1372,19 +1459,13 @@ def _decide(
     if targets and parsed.item_refs and not _targets_cover_topic(targets, parsed):
         targets, note = [], ""  # "lần thứ 8" in a question about something else
     if targets:
+        if len(targets) > 1:
+            outcome = _several_targets(question, parsed, targets, intent, stream_qa=stream_qa)
+            return _with_note(outcome, note), record
         action = _target_action(question, parsed, intent)
-        if action == "qa" and len(targets) > 1:
-            contexts = [
-                ctx
-                for target in targets
-                if (ctx := _article_context(target, get_article_content(
-                    article_id=target.get("article_id"), url=target.get("url")
-                ))) is not None
-            ]
-            return _with_note(_answer_from_articles(question, contexts, stream_qa=stream_qa), note), record
         outcome = _handle_target_article(
             question,
-            targets[-1],  # in "không phải bài 1, ý tôi là bài 2" the last number wins
+            targets[0],
             intent,
             action=action,
             max_sentences=parsed.max_sentences,
@@ -1397,7 +1478,11 @@ def _decide(
             "Hiện chưa có bài báo nào đang được chọn. Bạn hãy tìm kiếm hoặc chọn một bài báo trước nhé.",
         ), record
     wants_summary, wants_detail = _wants_summary_or_detail(question, intent)
-    if (wants_summary or wants_detail) and not parsed.topic_nouns and not parsed.is_question:
+    changes_list = bool(
+        parsed.source or parsed.category or parsed.date_from or parsed.exclude_sources
+        or parsed.all_sources or parsed.refers_back or parsed.wants_other
+    )
+    if (wants_summary or wants_detail) and not parsed.topic_nouns and not parsed.is_question and not changes_list:
         # "Tóm tắt giúp tôi": the open article, else the first in the list.
         target = state.current_article() or (state.items[0] if state.items else None)
         if target is not None:
@@ -1424,7 +1509,7 @@ def _decide(
         last is not None
         and not parsed.topic_nouns
         and not asks_for_new_list
-        and (parsed.has_slots or parsed.refers_to_list)
+        and (parsed.has_slots or parsed.refers_to_list or parsed.wants_other)
     ):
         if parsed.max_sentences and last.target is not None and last.intent == "summarization":
             outcome = _handle_target_article(
@@ -1433,27 +1518,50 @@ def _decide(
             )
             return outcome, record
         base = state.list_request or last.request
-        if base is not None and (parsed.source or parsed.category or parsed.count or parsed.date_from):
+        changes_filters = bool(
+            parsed.source or parsed.category or parsed.date_from
+            or parsed.exclude_sources or parsed.all_sources
+        )
+        if base is not None and (changes_filters or parsed.count or parsed.wants_other):
+            merged_source = None if parsed.all_sources else (parsed.source or base.source)
+            merged_excluded = [] if parsed.all_sources else sorted(
+                (set(base.exclude_sources) | set(parsed.exclude_sources)) - {merged_source}
+            )
             merged = replace(
                 base,
-                source=parsed.source or base.source,
+                source=merged_source,
+                exclude_sources=merged_excluded,
                 category=parsed.category or base.category,
                 count=parsed.count or base.count,
                 date_from=parsed.date_from or base.date_from,
                 date_to=parsed.date_to or base.date_to,
+                skip=[],
             )
+            # The same request again ("ba bài khác", or the same count once more):
+            # continue after the articles already shown.
+            repeated = merged.same_filters(state.list_request) and (
+                parsed.wants_other or merged.count == state.list_request.count
+            )
+            if repeated:
+                merged.skip = list(state.list_request.skip) + [article_key(a) for a in state.items]
             record.request = merged
             record.topic_words = list(merged.topic_words)
             outcome = _run_list_request(merged, concise_list=concise_list)
-            return _with_note(outcome, f"*(Lọc lại: {merged.describe()})*\n\n"), record
+            label = "Các bài tiếp theo" if repeated else "Lọc lại"
+            return _with_note(outcome, f"*({label}: {merged.describe()})*\n\n"), record
 
     # 3. Narrow the current list to a subject: "trong những bài này, chỉ lấy bài về Arsenal".
     if parsed.refers_to_list and parsed.topic_nouns and state.items:
         return _narrow_current_list(parsed, state, concise_list=concise_list), record
 
-    # 4. A question about the news.
+    # 4. A question about the news. A question that only sets filters is a list request.
     current = state.current_article()
-    asks = parsed.is_question and not _has_search_cue(question) and not _has_latest_cue(question)
+    asks = (
+        parsed.is_question
+        and not _has_search_cue(question)
+        and not _has_latest_cue(question)
+        and not _is_slots_only(parsed)
+    )
     if asks and not (parsed.category and _has_topic_search_cue(question)):
         if current is not None and not _has_search_cue(question):
             specific_tokens = _extract_content_tokens(question, include_qa_generic=True)
@@ -1464,11 +1572,14 @@ def _decide(
                     preloaded_content=active_content, stream_qa=stream_qa,
                 )
                 return outcome, record
-        points_back = parsed.relative == "current" or not parsed.topic_nouns
+        points_back = parsed.relative == "current" or parsed.refers_back or not parsed.topic_nouns
         if points_back and last is not None and last.topic_words:
             outcome, record.topic_words = _follow_up_answer(question, parsed, state, stream_qa=stream_qa)
             return outcome, record
-        return _question_answer(question, parsed, source=source, category=category, stream_qa=stream_qa), record
+        return _question_answer(
+            question, parsed, source=source, category=category, stream_qa=stream_qa,
+            exclude_sources=exclude_sources,
+        ), record
 
     # 5. A list: category, latest news, latest on a topic, or a keyword search.
     request = ListRequest(
@@ -1480,6 +1591,7 @@ def _decide(
         date_from=parsed.date_from,
         date_to=parsed.date_to,
         question=question,
+        exclude_sources=exclude_sources,
     )
     if _has_topic_search_cue(question) or (intent == "topic_search" and parsed.category):
         if parsed.category is None and not parsed.topic_words:
@@ -1500,6 +1612,8 @@ def _decide(
         return _search_then_open(question, intent, source=source, category=category), record
     else:
         record.request = request
+    if parsed.wants_other and record.request.same_filters(state.list_request):
+        record.request.skip = list(state.list_request.skip) + [article_key(a) for a in state.items]
     return _run_list_request(record.request, concise_list=concise_list), record
 
 
