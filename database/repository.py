@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, time
 import re
 from typing import Any, Callable
 
-from sqlalchemy import or_, text
+from sqlalchemy import func, or_, text
 
 from database.db import Article, SessionLocal, ensure_db_initialized
 
@@ -91,8 +91,13 @@ def get_latest_articles(
     limit: int = 10,
     source: str | None = None,
     category: str | None = None,
+    published_from: date | None = None,
+    published_to: date | None = None,
 ) -> tuple[list[dict[str, Any]], int, int]:
-    """Return latest dated articles ordered by published_at DESC along with coverage counts."""
+    """Return latest dated articles ordered by published_at DESC along with coverage counts.
+
+    ``published_from`` / ``published_to`` (inclusive dates) limit the publication date.
+    """
     ensure_db_initialized()
     db = SessionLocal()
     try:
@@ -101,6 +106,10 @@ def get_latest_articles(
             query = query.filter(Article.source == source)
         if category:
             query = query.filter(Article.category == category)
+        if published_from is not None:
+            query = query.filter(Article.published_at >= datetime.combine(published_from, time.min))
+        if published_to is not None:
+            query = query.filter(Article.published_at <= datetime.combine(published_to, time.max))
 
         total_count = query.count()
         dated_query = query.filter(Article.published_at.isnot(None))
@@ -108,6 +117,17 @@ def get_latest_articles(
         rows = dated_query.order_by(Article.published_at.desc()).limit(limit).all()
 
         return [_article_to_dict(article) for article in rows], total_count, dated_count
+    finally:
+        db.close()
+
+
+def get_archive_date_range() -> tuple[date | None, date | None]:
+    """Oldest and newest publication dates in the database."""
+    ensure_db_initialized()
+    db = SessionLocal()
+    try:
+        oldest, newest = db.query(func.min(Article.published_at), func.max(Article.published_at)).one()
+        return (oldest.date() if oldest else None), (newest.date() if newest else None)
     finally:
         db.close()
 
