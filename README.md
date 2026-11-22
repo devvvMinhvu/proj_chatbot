@@ -38,10 +38,14 @@ Hệ thống hỏi đáp, tìm kiếm kết hợp (SQLite FTS5 + PhoBERT/FAISS),
    python -m database.import_jsonl
    ```
 
-3. **Xây dựng Vector Database (FAISS + PhoBERT)**
+3. **Xây dựng Vector Database (FAISS + PhoBERT) và thống kê từ khóa**
    ```bash
    python -m nlp.vector_store
+   python -m nlp.keyword_stats
    ```
+   `nlp.keyword_stats` tách từ toàn bộ bài báo (pyvi, khoảng 3–4 phút) để học hư từ và
+   từ lệnh dùng khi đọc câu hỏi; kết quả lưu ở `data/keyword_stats.json.gz`. Nếu bỏ qua
+   bước này, ứng dụng sẽ tự tạo ở câu hỏi đầu tiên.
 
 4. **Huấn luyện các bộ phân loại**
    ```bash
