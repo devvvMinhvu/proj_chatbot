@@ -54,7 +54,27 @@ SON_LA = [
 ]
 MBAPPE = [article(21, "Mbappe chạm mốc 100 bàn cho Real Madrid"), article(22, "Mbappe tăng tốc trong cuộc đua")]
 SUMMARY = "Đây là câu tóm tắt thứ nhất. Đây là câu tóm tắt thứ hai. Đây là câu tóm tắt thứ ba."
-BY_ID = {item["article_id"]: item for item in LATEST + SON_LA + MBAPPE}
+# Shortened from the stored articles of the premise and role audit conversations.
+DIGITAL_WEEK = article(
+    31, "Những diễn giả nổi bật tại Tuần lễ Số 2026", category="tech",
+    body=(
+        "Nhiều chuyên gia sẽ tham dự Tuần lễ Số 2026. "
+        "Tuần lễ Số Quốc tế Việt Nam 2026 (VIDW 2026) diễn ra từ ngày 28 đến 30/10 tại Quảng Ninh. "
+        "Sự kiện do Bộ Khoa học và Công nghệ chủ trì tổ chức, dự kiến quy tụ 500 đại biểu trong và ngoài nước."
+    ),
+)
+LONG_AN = article(
+    32, "CLB hạng nhất đầu tiên thay HLV", source="tuoitre",
+    body=(
+        "CLB Long An đã thay HLV Trịnh Văn Hậu sau thành tích không tốt của đội qua 4 vòng đấu đầu tiên. "
+        "Sau 4 trận, CLB Long An chỉ giành có 1 điểm. "
+        "Cụ thể, HLV Huỳnh Ngọc San đã được chọn và đã chính thức bắt tay vào công việc vào chiều 26-10. "
+        "Đội bóng xứ chè còn có chân sút Victor Mansaray đang dẫn đầu danh sách Vua phá lưới với 8 bàn thắng."
+    ),
+)
+HUE_RAIN = article(33, "Huế cảnh báo mưa lớn, tăng nguy cơ lũ quét", source="tienphong", category="news",
+                   body="Huế cảnh báo mưa lớn trong tuần này, 700 hộ dân cần sơ tán.")
+BY_ID = {item["article_id"]: item for item in LATEST + SON_LA + MBAPPE + [DIGITAL_WEEK, LONG_AN, HUE_RAIN]}
 
 
 class Backend:
@@ -65,6 +85,7 @@ class Backend:
         self.calls: list[tuple[str, tuple, dict]] = []
         self.search_results: list[dict] = MBAPPE
         self.retrieve_articles: list[dict] = []
+        self.latest_articles: list[dict] = LATEST
 
     def _record(self, name, result):
         def fake(*args, **kwargs):
@@ -78,7 +99,7 @@ class Backend:
             return dict(item) if item else None
 
         def latest(limit=10, **filters):
-            items = [a for a in LATEST if filters.get("source") in (None, a["source"])
+            items = [a for a in self.latest_articles if filters.get("source") in (None, a["source"])
                      and filters.get("category") in (None, a["category"])
                      and a["source"] not in (filters.get("exclude_sources") or ())]
             return items[:limit], len(items), len(items)
@@ -427,6 +448,79 @@ class RetestConversations(ConversationTestCase):
         self.assertEqual(self.titles(outcome), [a["title"] for a in LATEST[3:6]])
         (_, kwargs), = self.backend.called("latest")
         self.assertEqual(kwargs.get("limit"), 6)
+
+
+
+@unittest.skipUnless(KEYWORD_STATS_PATH.exists(), "run `python -m nlp.keyword_stats` first")
+class PremiseAndRoleConversations(ConversationTestCase):
+    """Retest of 9f6a83a: false premises and swapped roles while an article is open."""
+
+    def open_article(self, item: dict) -> None:
+        self.backend.latest_articles = [*LATEST, item]
+        self.open_latest()
+        self.say(f"Đọc bài số {len(LATEST) + 1}", classifier="article_detail")
+
+    def test_false_premise_is_checked_against_the_open_article(self):  # "No false evidence for numbers"
+        self.open_article(DIGITAL_WEEK)
+        self.backend.retrieve_articles = [HUE_RAIN]
+        outcome = self.say("Đúng hay sai: Tuần lễ Số được tổ chức ở Huế cho 700 đại biểu?", "question_answering")
+        self.assertEqual(self.titles(outcome), [DIGITAL_WEEK["title"]])
+        self.assertIn("không xác nhận", outcome["answer"])
+        self.assertIn("không nhắc đến Huế", outcome["answer"])
+        self.assertIn("tại Quảng Ninh", outcome["answer"])
+        self.assertIn("dự kiến quy tụ 500 đại biểu", outcome["answer"])
+        self.assertFalse(self.backend.called("llm") or self.backend.called("retrieve"))
+        # The follow-up stays on the article ("con số" frames the question, "tham dự" is a
+        # verb), and the article says "dự kiến", not "thực tế": it answers the choice.
+        outcome = self.say("Đại biểu là con số dự kiến hay con số thực tế đã tham dự?", "question_answering")
+        self.assertEqual(self.titles(outcome), [DIGITAL_WEEK["title"]])
+        self.assertIn("đó là con số dự kiến", outcome["answer"])
+        self.assertIn("dự kiến quy tụ 500 đại biểu", outcome["answer"])
+        self.assertFalse(self.backend.called("retrieve") or self.backend.called("llm"))
+
+    def test_claim_the_article_contains_goes_to_the_model(self):
+        self.open_article(DIGITAL_WEEK)
+        outcome = self.say("Có phải Tuần lễ Số diễn ra tại Quảng Ninh không?", "question_answering")
+        self.assertEqual(self.titles(outcome), [DIGITAL_WEEK["title"]])
+        self.assertTrue(self.backend.called("llm"))
+
+    def test_claim_about_another_subject_leaves_the_article(self):
+        self.open_latest()
+        self.say("Đọc toàn văn bài số 2", classifier="article_detail")
+        self.backend.retrieve_articles = MBAPPE
+        self.say("Messi có đoạt Quả Bóng Vàng không?", "question_answering")
+        self.assertTrue(self.backend.called("retrieve"))
+
+    def test_false_premise_without_an_open_article(self):
+        self.backend.retrieve_articles = [HUE_RAIN, DIGITAL_WEEK]
+        outcome = self.say("Đúng hay sai: Tuần lễ Số được tổ chức ở Huế cho 700 đại biểu?", "question_answering")
+        # The weather report mentions Huế and 700 but is not about the event.
+        self.assertIn("không tìm thấy bài nào xác nhận", outcome["answer"])
+        self.assertEqual(self.titles(outcome), [DIGITAL_WEEK["title"]])
+        self.assertFalse(self.backend.called("llm"))
+
+    def test_claim_details_do_not_steer_the_search(self):
+        # Only the weather report comes back: the search runs again without "Huế" and
+        # "700", and with still no article about the subject the reply says so.
+        self.backend.retrieve_articles = [HUE_RAIN]
+        outcome = self.say("Đúng hay sai: Tuần lễ Số được tổ chức ở Huế cho 700 đại biểu?", "question_answering")
+        first, second = self.backend.called("retrieve")
+        self.assertIn("Huế", first[0][0])
+        self.assertNotIn("Huế", second[0][0])
+        self.assertNotIn("700", second[0][0])
+        self.assertIn("không tìm thấy bài báo nào về", outcome["answer"])
+        self.assertFalse(self.backend.called("llm"))
+
+    def test_role_questions_stay_on_the_open_article(self):  # "Incoming versus outgoing coach"
+        self.open_article(LONG_AN)
+        self.backend.retrieve_articles = MBAPPE
+        for text in ("CLB Long An chia tay ai và bổ nhiệm ai thay thế?",
+                     "Ai rời ghế, ai nhận ghế?",
+                     "Sau bốn vòng đấu Long An giành bao nhiêu điểm?"):
+            with self.subTest(text=text):
+                outcome = self.say(text, "question_answering")
+                self.assertEqual(self.titles(outcome), [LONG_AN["title"]])
+                self.assertFalse(self.backend.called("retrieve"))
 
 
 if __name__ == "__main__":

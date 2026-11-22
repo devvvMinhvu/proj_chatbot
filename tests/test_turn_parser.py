@@ -63,6 +63,18 @@ class TurnParserTests(unittest.TestCase):
         self.assertIsNone(parsed.count)
         self.assertTrue(parse_turn("Cho tôi ba bài khác", TODAY).wants_other)
 
+    def test_yes_no_questions_and_their_claims(self):
+        parsed = parse_turn("Đúng hay sai: Tuần lễ Số được tổ chức ở Huế cho 700 đại biểu?", TODAY)
+        self.assertTrue(parsed.yes_no)
+        self.assertNotIn("sai", parsed.topic_words)  # "đúng hay sai" asks; it is not a subject
+        self.assertEqual(parsed.topic_nouns[:1], ["tuần lễ"])
+        self.assertTrue(parse_turn("Bài 2 có nhắc đến VnExpress không?", TODAY).yes_no)
+        self.assertTrue(parse_turn("Có phải Kane đoạt Quả Bóng Vàng khi mới 11 tuổi không?", TODAY).yes_no)
+        for text in ("Có bao nhiêu đại biểu dự kiến tham dự?", "CLB Long An chia tay ai?", "Đọc bài 3"):
+            with self.subTest(text=text):
+                self.assertFalse(parse_turn(text, TODAY).yes_no)
+        self.assertIn("chia tay", parse_turn("CLB Long An chia tay ai và bổ nhiệm ai thay thế?", TODAY).predicate_words)
+
 
 class ConversationStateTests(unittest.TestCase):
     def test_new_list_closes_opened_articles_and_keeps_pins(self):

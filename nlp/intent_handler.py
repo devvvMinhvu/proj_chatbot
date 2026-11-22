@@ -33,8 +33,13 @@ from database.repository import (
 from nlp.conversation_state import ConversationState, ListRequest, TurnRecord, article_key
 from nlp.intent_classifier import predict_intent
 from nlp.keyword_stats import conversation_words
+from nlp import lexicon
+from nlp.premise_check import (
+    alternative_choice, alternative_reply, claim_parts, check_premise, premise_reply, subject_in,
+)
 from nlp.turn_parser import ParsedTurn, describe as describe_turn, parse_turn
-from processing.text_matching import matched_keywords
+from processing.role_check import ROLE_VERBS
+from processing.text_matching import accented_lower, matched_keywords
 
 
 # Nạp pipeline nặng theo nhu cầu, tránh import PyTorch ngay khi mở Streamlit.
@@ -300,22 +305,10 @@ _FOLLOWUP_STOPWORDS = {
     "tu", "tren", "nhung", "cac", "cai", "them", "con", "nua", "khong",
 }
 
-_QA_GENERIC_WORDS = _FOLLOWUP_STOPWORDS | {
-    "nguyen", "nhan", "ket", "qua", "su", "viec", "vu", "viec", "chi", "phi",
-    "kinh", "phi", "ngan", "sach", "bao", "nhieu", "khi", "nao", "o", "dau",
-    "vi", "sao", "tai", "sao", "nhu", "the", "nao", "ra", "sao", "cu", "the",
-    "ai", "phat", "bieu", "noi", "gi", "dien", "ra", "xay", "ra", "thoi", "gian",
-    "dia", "diem", "muc", "dich", "giai", "phap", "anh", "huong", "tac", "dong",
-    "de", "cap", "nhac", "den", "chuyen", "gi", "co", "duoc", "khong", "phai",
-    "da", "dang", "se", "trong", "va", "voi", "nhung", "mot", "cac", "do",
-}
-
-
-def _extract_content_tokens(question: str, *, include_qa_generic: bool = False) -> list[str]:
+def _extract_content_tokens(question: str) -> list[str]:
     """Extract normalized alphanumeric tokens excluding stopwords."""
-    stopwords = _QA_GENERIC_WORDS if include_qa_generic else _FOLLOWUP_STOPWORDS
     tokens = re.findall(r"[a-z0-9]+", _normalize_label(question))
-    return [tok for tok in tokens if len(tok) > 1 and tok not in stopwords]
+    return [tok for tok in tokens if len(tok) > 1 and tok not in _FOLLOWUP_STOPWORDS]
 
 
 def _wants_summary_or_detail(question: str, intent: str) -> tuple[bool, bool]:
@@ -465,37 +458,6 @@ def _is_bare_followup_request(question: str, intent: str) -> bool:
     if not (wants_summary or wants_detail):
         return False
     return len(_extract_content_tokens(question)) == 0
-
-
-def _article_covers_question(
-    question: str,
-    question_tokens: list[str],
-    article: dict[str, Any],
-    content: dict[str, Any] | None = None,
-) -> bool:
-    """Check whether every specific word of the question appears in the active article.
-
-    Words are matched as whole words and accent-aware ("vàng" is not "vang"), so a new
-    question such as "Vì sao giá vàng tăng?" is not answered from an article about fuel
-    prices just because both mention "giá" and "tăng".
-    """
-    searchable = " ".join(
-        [
-            str(article.get("title") or ""),
-            str(article.get("sapo") or ""),
-            str((content or {}).get("title") or ""),
-            str((content or {}).get("sapo") or ""),
-            str((content or {}).get("body") or ""),
-        ]
-    )
-    wanted = set(question_tokens)
-    words = [
-        word
-        for word in re.findall(r"[0-9a-zA-ZÀ-ỹĐđ]+", question or "")
-        if _normalize_label(word) in wanted
-    ]
-    distinct = {word.casefold() for word in words}
-    return len(matched_keywords(sorted(distinct), searchable)) == len(distinct)
 
 
 def _get_latest_news(limit: int = 10, **filters: Any):
@@ -938,6 +900,74 @@ def _checked_summary(summary: str | None, body: str, max_sentences: int | None) 
     return _limit_sentences(kept.strip(), max_sentences), note
 
 
+def _article_text(article: dict[str, Any], content: dict[str, Any] | None) -> str:
+    return " ".join(
+        str(value or "")
+        for value in (
+            article.get("title"), article.get("source"), article.get("sapo"),
+            (content or {}).get("title"), (content or {}).get("source"),
+            (content or {}).get("sapo"), (content or {}).get("body"),
+        )
+    )
+
+
+def _stays_on_article(
+    question: str,
+    parsed: ParsedTurn,
+    article: dict[str, Any],
+    content: dict[str, Any] | None = None,
+) -> bool:
+    """Is a question asked while an article is open about that article?
+
+    Every topic word must be in the article, with three exceptions that an article
+    words differently or that the user brings to be checked: verbs and role-change
+    phrases ("chia tay" where the article says "thay", "rời ghế"), question nouns
+    ("con số"), and, in a yes-or-no question whose subject is in the article, the
+    names of the claim ("Tuần lễ Số được tổ chức ở Huế?"). A missing noun, adjective
+    or name is a new subject: "Vì sao giá vàng tăng?" is not about a fuel-price
+    article, "Messi có đoạt Quả Bóng Vàng không?" not about the Kane profile.
+    """
+    text = _article_text(article, content)
+    exact = parsed.exact_accents
+    missing = [word for word in parsed.topic_words if not matched_keywords([word], text, exact=exact)]
+    if not missing:
+        return True
+    role_words: set[str] = set()
+    for phrase in matched_keywords(list(ROLE_VERBS), question, exact=exact):
+        role_words.update(phrase.split())
+    claim_subject = parsed.yes_no and subject_in(parsed, text)
+    for word in missing:
+        if word in parsed.predicate_words or lexicon.is_one_of(word, lexicon.QUESTION_NOUNS, exact):
+            continue
+        if set(word.split()) <= role_words:
+            continue
+        if claim_subject and word in parsed.entity_words:
+            continue
+        return False
+    return True
+
+
+def _premise_outcome(
+    question: str,
+    parsed: ParsedTurn | None,
+    selected: dict[str, Any],
+    content: dict[str, Any] | None,
+    body_text: str,
+) -> dict[str, Any] | None:
+    """Answered from the article without the model: a yes-or-no claim it does not
+    confirm, or an "A hay B" question it answers with only one option's words."""
+    if parsed is None:
+        return None
+    premise = check_premise(question, parsed, _article_text(selected, content), body_text)
+    if premise is not None and not premise.holds:
+        answer = premise_reply(premise, selected["title"])
+        return _outcome("question_answering", answer, [selected], selected_single=True)
+    choice = alternative_choice(question, parsed, body_text)
+    if choice is not None:
+        return _outcome("question_answering", alternative_reply(*choice), [selected], selected_single=True)
+    return None
+
+
 def _handle_target_article(
     question: str,
     target: dict[str, Any],
@@ -947,10 +977,13 @@ def _handle_target_article(
     max_sentences: int | None = None,
     preloaded_content: dict[str, Any] | None = None,
     stream_qa: bool = False,
+    parsed: ParsedTurn | None = None,
 ) -> dict[str, Any]:
     """Summarize, read or answer a question about one resolved article.
 
     ``action`` is "summary", "detail" or "qa"; without it the request wording decides.
+    With ``parsed``, the claim of a yes-or-no question is checked against the
+    article before the model answers.
     """
     content = preloaded_content or get_article_content(
         article_id=target.get("article_id"),
@@ -1003,6 +1036,9 @@ def _handle_target_article(
             selected_single=True,
         )
 
+    premise = _premise_outcome(question, parsed, selected, content, body_text)
+    if premise is not None:
+        return premise
     article_ctx = _article_context(selected, content) or {
         "article_id": selected.get("article_id"),
         "title": selected["title"],
@@ -1329,6 +1365,11 @@ def _question_answer(
 ) -> dict[str, Any]:
     clean_qa = _strip_source_mentions(question) if (source or exclude_sources) else question
     effective_qa = clean_qa or question
+    if parsed.yes_no:
+        return _yes_no_answer(
+            question, effective_qa, parsed, source=source, category=category,
+            exclude_sources=exclude_sources, stream_qa=stream_qa,
+        )
     if not stream_qa:
         ask_kwargs: dict[str, Any] = {}
         if source is not None:
@@ -1356,6 +1397,121 @@ def _question_answer(
         return _outcome("question_answering", "Tôi chưa tìm thấy bài báo phù hợp để trả lời câu hỏi này.")
     articles = group_chunks_by_article(chunks)
     return _answer_from_articles(effective_qa, articles, stream_qa=True)
+
+
+def _without_claim_details(parsed: ParsedTurn, names: list[str], numbers: list[str]) -> str:
+    """The question without its verification phrase and claim details, for a new search.
+
+    "Đúng hay sai: Tuần lễ Số được tổ chức ở Huế cho 700 đại biểu?" becomes "Tuần lễ
+    Số được tổ chức ở cho": names other than the subject, numbers and the noun a
+    number counts ("700 đại biểu") are left out. Empty when nothing was left out.
+    """
+    details = {
+        accented_lower(word) for word in names
+        if accented_lower(word) in parsed.entity_words and not subject_in(parsed, word)
+    } | set(numbers)
+    kept: list[str] = []
+    removed = False
+    skip_unit = False
+    for word, tag in zip(parsed.words, parsed.tags):
+        if skip_unit and tag.startswith("N"):
+            skip_unit = False
+            continue
+        skip_unit = False
+        lowered = accented_lower(word)
+        if lowered in details:
+            removed = True
+            skip_unit = word in numbers
+            continue
+        if tag == "F" or lexicon.is_one_of(word, lexicon.VERIFICATION_PHRASES, parsed.exact_accents):
+            continue
+        kept.append(word)
+    text = " ".join(kept)
+    for phrase in lexicon.VERIFICATION_PHRASES:  # phrases split over several tokens
+        text = re.sub(rf"(?i)^{re.escape(phrase)}\s+", "", text)
+    return text.strip() if removed else ""
+
+
+def _yes_no_answer(
+    question: str,
+    effective_qa: str,
+    parsed: ParsedTurn,
+    *,
+    source: str | None,
+    category: str | None,
+    exclude_sources: list[str] | None,
+    stream_qa: bool,
+) -> dict[str, Any]:
+    """A yes-or-no question with no article open.
+
+    Only articles about the question's subject that contain the whole claim (its
+    names and numbers) may answer it; a weather report that mentions Huế does not
+    confirm that an event took place in Huế. The claim's details steer the search
+    towards such articles, so when none is about the subject the search runs again
+    without them. When no article contains the whole claim, the reply says what the
+    most relevant article on the subject says instead (the search order, not the
+    number of matching details: an unrelated story may share the claim's number),
+    or that no article is about the subject.
+    """
+    retrieve_kwargs: dict[str, Any] = {}
+    if source is not None:
+        retrieve_kwargs["source"] = source
+    if category is not None:
+        retrieve_kwargs["category"] = category
+    if exclude_sources:
+        retrieve_kwargs["exclude_sources"] = list(exclude_sources)
+
+    def weigh(articles: list[dict[str, Any]]):
+        on_subject: list[dict[str, Any]] = []
+        confirming: list[dict[str, Any]] = []
+        closest: tuple[dict[str, Any], Any, dict[str, Any]] | None = None
+        for item in articles:
+            content = get_article_content(article_id=item.get("article_id"), url=item.get("url"))
+            text = _article_text(item, content)
+            if not subject_in(parsed, text):
+                continue
+            on_subject.append(item)
+            body = (content or {}).get("body") or " ".join(item.get("texts") or [])
+            premise = check_premise(question, parsed, text, body)
+            if premise is None or premise.holds:
+                confirming.append(item)
+                continue
+            if closest is None:
+                closest = (item, premise, content)
+        return on_subject, confirming, closest
+
+    chunks = retrieve(effective_qa, **retrieve_kwargs)
+    if not chunks:
+        return _outcome("question_answering", "Tôi chưa tìm thấy bài báo phù hợp để trả lời câu hỏi này.")
+    articles = group_chunks_by_article(chunks)
+    on_subject, confirming, closest = weigh(articles)
+    names, numbers = claim_parts(question)
+    if not on_subject and (names or numbers):
+        plain = _without_claim_details(parsed, names, numbers)
+        chunks = retrieve(plain, **retrieve_kwargs) if plain else []
+        if chunks:
+            articles = group_chunks_by_article(chunks)
+            on_subject, confirming, closest = weigh(articles)
+        if not on_subject:
+            subject = next(
+                (w for w in parsed.topic_nouns if not lexicon.is_one_of(w, lexicon.QUESTION_NOUNS)), ""
+            )
+            return _outcome(
+                "question_answering",
+                f"Tôi không tìm thấy bài báo nào về \"{subject}\" để kiểm tra điều này, "
+                "nên không xác nhận được.",
+            )
+    if confirming:
+        articles = confirming
+    elif closest is not None:
+        item, premise, content = closest
+        selected = dict(item)
+        selected["title"] = (content or {}).get("title") or item.get("title") or "Bài báo"
+        answer = premise_reply(premise, selected["title"], found_any=False)
+        return _outcome("question_answering", answer, [selected])
+    if stream_qa:
+        return _answer_from_articles(effective_qa, articles, stream_qa=True)
+    return _outcome("question_answering", generate_answer(effective_qa, articles), _articles_to_sources(articles))
 
 
 # --- The turn ------------------------------------------------------------------------
@@ -1470,6 +1626,7 @@ def _decide(
             action=action,
             max_sentences=parsed.max_sentences,
             stream_qa=stream_qa,
+            parsed=parsed,
         )
         return _with_note(outcome, note), record
     if parsed.relative == "current" and not parsed.is_question and state.current_article() is None and not state.items:
@@ -1564,12 +1721,11 @@ def _decide(
     )
     if asks and not (parsed.category and _has_topic_search_cue(question)):
         if current is not None and not _has_search_cue(question):
-            specific_tokens = _extract_content_tokens(question, include_qa_generic=True)
             active_content = get_article_content(article_id=current.get("article_id"), url=current.get("url"))
-            if not specific_tokens or _article_covers_question(question, specific_tokens, current, content=active_content):
+            if _stays_on_article(question, parsed, current, active_content):
                 outcome = _handle_target_article(
                     question, current, "question_answering", action="qa",
-                    preloaded_content=active_content, stream_qa=stream_qa,
+                    preloaded_content=active_content, stream_qa=stream_qa, parsed=parsed,
                 )
                 return outcome, record
         points_back = parsed.relative == "current" or parsed.refers_back or not parsed.topic_nouns
@@ -1685,8 +1841,10 @@ def respond_on_article(
         "qa": ("qa", "question_answering"),
     }
     handler_action, intent = mapping.get(action, mapping["summarize"])
-    outcome = _handle_target_article(question, article, intent, action=handler_action, stream_qa=stream_qa)
     parsed = parse_turn(question)
+    outcome = _handle_target_article(
+        question, article, intent, action=handler_action, stream_qa=stream_qa, parsed=parsed
+    )
     record = TurnRecord(
         question=question,
         intent=outcome.get("intent", intent),

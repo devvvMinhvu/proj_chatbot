@@ -562,6 +562,13 @@ def _article_text(article: dict[str, Any]) -> str:
     ])
 
 
+def _article_text_body(article: dict[str, Any]) -> str:
+    """The article's own sentences (title, lead and text), one per line."""
+    return "\n".join(
+        str(part) for part in (article.get("title"), article.get("sapo"), *article.get("texts", [])) if part
+    )
+
+
 def _cited_sources(sentence: str) -> list[int]:
     numbers: list[int] = []
     for match in _CITATION_NUMBERS.finditer(sentence):
@@ -614,9 +621,12 @@ def _with_citation(sentence: str, articles: list[dict[str, Any]]) -> str:
 class GroundedAnswer:
     """Checks a streamed answer sentence by sentence before it is shown.
 
-    A sentence whose numbers or names appear in no source (and not in the
-    question) is held back; citations are added or corrected. Only complete
-    sentences are released, so the user never sees an unchecked number.
+    A sentence is held back when its numbers or names appear in no source (the
+    question's own may be repeated only to deny them), or when it gives a person
+    the role the source gives someone else ("bổ nhiệm" for the coach who left).
+    A bare verdict ("Đúng.") waits for the sentence that supports it and is
+    dropped with it. Citations are added or corrected. Only complete sentences
+    are released, so the user never sees an unchecked number.
     """
 
     def __init__(self, question: str, articles: list[dict[str, Any]]) -> None:
@@ -626,17 +636,30 @@ class GroundedAnswer:
         self.buffer = ""
         self.shown = 0
         self.dropped = 0
+        self.role_dropped = 0
+        self.verdict = ""
 
     def _release(self, sentence: str) -> str:
-        from processing.fact_check import check
+        from processing.fact_check import check, denies, is_verdict
+        from processing.role_check import role_conflicts
 
         if not sentence.strip():
             return sentence
-        if not check(sentence, self.context, allowed=self.question).supported:
+        if is_verdict(sentence):
+            self.verdict = sentence.strip()
+            return ""
+        verdict, self.verdict = self.verdict, ""
+        allowed = self.question if denies(sentence) else ""
+        if not check(sentence, self.context, allowed=allowed).supported:
             self.dropped += 1
             return ""
+        if role_conflicts(sentence, self.context):
+            self.dropped += 1
+            self.role_dropped += 1
+            return ""
         self.shown += 1
-        return _with_citation(sentence, self.articles)
+        released = _with_citation(sentence, self.articles)
+        return f"{verdict} {released}" if verdict else released
 
     def feed(self, piece: str) -> str:
         self.buffer += piece
@@ -655,19 +678,40 @@ class GroundedAnswer:
                 released.append(text + separator)
         return "".join(released)
 
+    def _role_evidence(self) -> str:
+        from processing.role_check import role_evidence
+
+        lines = []
+        for index, article in enumerate(self.articles, start=1):
+            for sentence in role_evidence(_article_text_body(article)):
+                lines.append(f"> {sentence} [Nguồn {index}]")
+        return "\n\n".join(lines[:4])
+
     def finish(self) -> str:
         parts = [self._release(self.buffer)] if self.buffer.strip() else []
         self.buffer = ""
+        if self.verdict and not self.dropped:
+            parts.append(self.verdict)  # a bare "Đúng." with nothing after it
+        self.verdict = ""
+        evidence = self._role_evidence() if self.role_dropped else ""
         if self.dropped and not self.shown:
-            parts = [
-                "Tôi không xác nhận được các số liệu hoặc tên trong câu trả lời từ các bài báo "
-                "tìm được, nên không đưa ra kết luận. Trích đoạn liên quan:\n\n"
-                + "\n\n".join(_excerpt_lines(self.articles))
-            ]
+            if evidence:
+                parts = [
+                    "Câu trả lời vừa tạo gán vai trò (ai rời đi, ai thay thế) không khớp với bài báo, "
+                    "nên tôi không đưa ra. Bài báo viết:\n\n" + evidence
+                ]
+            else:
+                parts = [
+                    "Tôi không xác nhận được các số liệu hoặc tên trong câu trả lời từ các bài báo "
+                    "tìm được, nên không đưa ra kết luận. Trích đoạn liên quan:\n\n"
+                    + "\n\n".join(_excerpt_lines(self.articles))
+                ]
         elif self.dropped:
             parts.append(
-                f"\n\n*(Đã lược {self.dropped} câu có số liệu hoặc tên không có trong các bài báo nguồn.)*"
+                f"\n\n*(Đã lược {self.dropped} câu có số liệu, tên hoặc vai trò không khớp với các bài báo nguồn.)*"
             )
+            if evidence:
+                parts.append("\n\nBài báo viết:\n\n" + evidence)
         return "".join(parts)
 
 

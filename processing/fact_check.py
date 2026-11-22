@@ -18,6 +18,9 @@ _NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
 _CITATION = re.compile(r"\[\s*Nguồn\s*\d+(?:\s*[,;]\s*(?:Nguồn\s*)?\d+)*\s*\]", re.IGNORECASE)
 _WORD = re.compile(r"[0-9a-zA-ZÀ-ỹĐđ]+")
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+|\n+")
+_DENIAL = re.compile(r"(?<![\wÀ-ỹ])(không|chưa|chẳng|sai)(?![\wÀ-ỹ])", re.IGNORECASE)
+#: A sentence that is only a verdict ("Đúng.", "Không.") says nothing checkable on its own.
+_VERDICT = re.compile(r"(?:đúng|sai|có|không|phải|chưa)(?:\s+(?:vậy|rồi|ạ))?", re.IGNORECASE)
 
 
 def strip_citations(text: str) -> str:
@@ -89,11 +92,24 @@ class FactCheck:
         return not (self.unsupported_numbers or self.unsupported_names)
 
 
+def denies(text: str) -> bool:
+    """Does the sentence negate something ("không", "chưa", "sai")?"""
+    return bool(_DENIAL.search(strip_citations(text)))
+
+
+def is_verdict(text: str) -> bool:
+    """"Đúng.", "Không ạ.", "Có [Nguồn 1]." — a yes or no with nothing else."""
+    plain = re.sub(r"[\s.,!?…:;]+", " ", strip_citations(text)).strip()
+    return bool(plain) and bool(_VERDICT.fullmatch(plain))
+
+
 def check(text: str, source: str, allowed: str = "") -> FactCheck:
     """Numbers and names of ``text`` that appear neither in ``source`` nor in ``allowed``.
 
-    ``allowed`` is usually the user's question: numbers and names the user wrote
-    may be repeated.
+    ``allowed`` is usually the user's question. Callers pass it only for sentences
+    that deny something: "Bài không nhắc đến Huế" may repeat the user's "Huế",
+    but "Tuần lễ Số diễn ra ở Huế" must find "Huế" in the source, otherwise a
+    false premise in the question would pass as a fact.
     """
     known_numbers = _source_numbers(source) | _source_numbers(allowed)
     missing_numbers = [n for n in sorted(numbers_in(text)) if not (_number_forms(n) & known_numbers)]

@@ -71,7 +71,11 @@ class ParsedTurn:
     #: Topic words that are nouns or names: a message with none brings no new subject.
     topic_nouns: list[str] = field(default_factory=list)
     entity_words: list[str] = field(default_factory=list)
+    #: Topic words that are verbs ("chia tay", "tham dự"): an article may say them differently.
+    predicate_words: list[str] = field(default_factory=list)
     is_question: bool = False
+    #: A yes-or-no question ("Đúng hay sai: …", "Có phải … không?"): its details are claims.
+    yes_no: bool = False
 
     @property
     def has_slots(self) -> bool:
@@ -299,6 +303,20 @@ def parse_turn(text: str, today: date | None = None) -> ParsedTurn:
     )
     negated = _negated_positions(words, tags, exact, parsed.is_question)
 
+    # Yes-or-no questions: a verification phrase, or a final "không/chưa" with no
+    # question word ("Bài 2 có nhắc đến VnExpress không?"). The phrase is not a topic.
+    verifying = False
+    asks_wh = False
+    for position in range(len(words)):
+        length = _match_phrase(words, position, lexicon.VERIFICATION_PHRASES, exact)
+        if length:
+            verifying = True
+            consumed.update(range(position, position + length))
+        elif _match_phrase(words, position, lexicon.QUESTION_WORDS, exact):
+            asks_wh = True
+    ends_with_particle = bool(last_word) and lexicon.is_one_of(last_word, ("không", "chưa"), exact)
+    parsed.yes_no = parsed.is_question and (verifying or (ends_with_particle and not asks_wh))
+
     # Publishers: a name in a negated clause is left out ("trừ VnExpress").
     included: list[str] = []
     source_names: list[str] = []
@@ -447,6 +465,8 @@ def parse_turn(text: str, today: date | None = None) -> ParsedTurn:
         parsed.topic_words.append(lowered)
         if tag.startswith("N") or is_name:
             parsed.topic_nouns.append(lowered)
+        elif tag.startswith("V"):
+            parsed.predicate_words.append(lowered)
     if parsed.date_from is None and not parsed.item_refs:
         for word in list(parsed.topic_words):
             start, end, matched = find_dates(word, today)
@@ -502,6 +522,7 @@ def describe(parsed: ParsedTurn) -> dict[str, Any]:
             "category": parsed.category,
             "topic_words": parsed.topic_words,
             "is_question": parsed.is_question,
+            "yes_no": parsed.yes_no,
         }.items()
         if value not in (None, [], False)
     }

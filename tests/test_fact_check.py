@@ -60,6 +60,58 @@ class GroundedAnswerMetadataTests(unittest.TestCase):
         self.assertIn("11 giờ 7 phút", shown)
 
 
+class PremiseAndRoleTests(unittest.TestCase):
+    """The answer check does not let a question's details or swapped roles through."""
+
+    WEEK = [{
+        "title": "Những diễn giả nổi bật tại Tuần lễ Số 2026",
+        "source": "vnexpress",
+        "texts": ["Tuần lễ Số 2026 diễn ra tại Quảng Ninh, dự kiến quy tụ 500 đại biểu."],
+    }]
+
+    def shown(self, question, answer, articles):
+        from rag.pipeline import GroundedAnswer
+
+        grounded = GroundedAnswer(question, articles)
+        return grounded.feed(answer + "\n") + grounded.finish()
+
+    def test_question_details_may_be_denied_not_affirmed(self):
+        question = "Đúng hay sai: Tuần lễ Số được tổ chức ở Huế cho 700 đại biểu?"
+        shown = self.shown(question, "Đúng. Tuần lễ Số được tổ chức ở Huế cho 700 đại biểu [Nguồn 1].", self.WEEK)
+        self.assertNotIn("Đúng", shown)  # the verdict goes with the sentence it stood on
+        self.assertNotIn("700 đại biểu", shown)
+        shown = self.shown(question, "Sai. Bài không nhắc đến Huế; sự kiện diễn ra tại Quảng Ninh [Nguồn 1].", self.WEEK)
+        self.assertIn("Sai. Bài không nhắc đến Huế", shown)
+
+    def test_verdict_helpers(self):
+        self.assertTrue(fact_check.is_verdict("Đúng."))
+        self.assertTrue(fact_check.is_verdict("Không ạ [Nguồn 1]."))
+        self.assertFalse(fact_check.is_verdict("Đúng, sự kiện ở Quảng Ninh."))
+        self.assertTrue(fact_check.denies("Bài không nhắc đến Huế."))
+        self.assertFalse(fact_check.denies("Tuần lễ Số diễn ra ở Huế."))
+
+    def test_swapped_roles_are_replaced_by_the_article_sentences(self):
+        articles = [{
+            "title": "CLB hạng nhất đầu tiên thay HLV",
+            "source": "tuoitre",
+            "texts": [
+                "CLB Long An đã thay HLV Trịnh Văn Hậu sau 4 vòng đấu. "
+                "HLV Huỳnh Ngọc San đã được chọn. "
+                "Đội bóng xứ chè còn có chân sút Victor Mansaray."
+            ],
+        }]
+        shown = self.shown(
+            "CLB Long An chia tay ai và bổ nhiệm ai thay thế?",
+            "CLB Long An chia tay HLV Huỳnh Ngọc San và bổ nhiệm Victor Mansaray thay thế [Nguồn 1].",
+            articles,
+        )
+        self.assertNotIn("bổ nhiệm Victor Mansaray", shown)
+        self.assertIn("không khớp với bài báo", shown)
+        self.assertIn("> CLB Long An đã thay HLV Trịnh Văn Hậu sau 4 vòng đấu. [Nguồn 1]", shown)
+        correct = "CLB Long An chia tay HLV Trịnh Văn Hậu và chọn HLV Huỳnh Ngọc San [Nguồn 1]."
+        self.assertEqual(self.shown("CLB Long An chia tay ai?", correct, articles).strip(), correct)
+
+
 class CheckedSummaryTests(unittest.TestCase):
     def test_falls_back_to_opening_sentences(self):
         from nlp.intent_handler import _checked_summary

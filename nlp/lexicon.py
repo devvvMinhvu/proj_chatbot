@@ -76,6 +76,14 @@ QUESTION_WORDS = (
 )
 #: Question particles that only ask when they end the sentence ("… không?").
 FINAL_QUESTION_PARTICLES = ("không", "chưa", "hả", "à")
+#: Ask whether a statement is true; the rest of the message is a claim to check
+#: ("Đúng hay sai: …", "Có phải … không?", "… đúng không?").
+VERIFICATION_PHRASES = (
+    "đúng hay sai", "đúng hay không", "đúng không", "phải không", "có phải", "có đúng",
+    "đúng là", "có thật", "phải chăng", "đúng chứ",
+)
+#: Nouns that frame a question instead of naming its subject ("con số dự kiến hay thực tế?").
+QUESTION_NOUNS = ("con số", "số liệu", "thông tin", "chi tiết", "nội dung", "điều", "việc")
 #: Units that make a number a summary length ("một câu").
 SENTENCE_UNITS = ("câu",)
 
