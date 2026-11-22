@@ -14,19 +14,26 @@ Các hàm điều phối chính trả về (answer, sources) cho giao diện Str
 
 from __future__ import annotations
 
+from dataclasses import replace
+from datetime import date
 from functools import lru_cache
 import re
 import unicodedata
 from typing import Any
 
+from config import CATEGORY_DISPLAY
 from database.db import Article, SessionLocal
 from database.repository import (
+    get_archive_date_range,
     get_article_content,
     get_latest_articles,
     search_latest_topic_articles,
     search_topic_articles,
 )
+from nlp.conversation_state import ConversationState, ListRequest, TurnRecord
 from nlp.intent_classifier import predict_intent
+from nlp.keyword_stats import conversation_words
+from nlp.turn_parser import ParsedTurn, describe as describe_turn, parse_turn
 from processing.text_matching import matched_keywords
 
 
@@ -55,22 +62,16 @@ def generate_answer(*args, **kwargs):
     return pipeline_generate_answer(*args, **kwargs)
 
 
+def _order_by_date(articles):
+    from rag.pipeline import order_by_date
+
+    return order_by_date(articles)
+
+
 def stream_answer(*args, **kwargs):
     from rag.pipeline import stream_answer as pipeline_stream_answer
 
     return pipeline_stream_answer(*args, **kwargs)
-
-
-def asks_for_financial_amount(question: str) -> bool:
-    from rag.pipeline import asks_for_financial_amount as pipeline_asks_finance
-
-    return pipeline_asks_finance(question)
-
-
-def has_financial_evidence(question: str, articles: list[dict[str, Any]]) -> bool:
-    from rag.pipeline import has_financial_evidence as pipeline_has_finance
-
-    return pipeline_has_finance(question, articles)
 
 
 INTRODUCTION_RESPONSE = """Tôi là Trợ lý đọc báo thông minh, hỗ trợ bạn khai thác
@@ -497,12 +498,9 @@ def _article_covers_question(
     return len(matched_keywords(sorted(distinct), searchable)) == len(distinct)
 
 
-def _get_latest_news(
-    limit: int = 10,
-    source: str | None = None,
-    category: str | None = None,
-):
-    return get_latest_articles(limit=limit, source=source, category=category)
+def _get_latest_news(limit: int = 10, **filters: Any):
+    """Latest articles; ``filters`` are source, category, published_from, published_to."""
+    return get_latest_articles(limit=limit, **filters)
 
 
 def _search_latest_topic_articles(
@@ -524,15 +522,13 @@ def _search_latest_topic_articles(
 
 
 def _search_topic_articles(
-    topic: str,
+    category: str,
     limit: int = 10,
     source: str | None = None,
 ):
-    accepted_values = {
-        _normalize_label(value) for value in CATEGORY_VALUE_ALIASES.get(topic, ())
-    }
+    """Articles of one category, given as its database value (e.g. "sports")."""
     kwargs: dict[str, Any] = {
-        "accepted_values": accepted_values,
+        "accepted_values": {_normalize_label(category)},
         "normalize_fn": _normalize_label,
         "limit": limit,
         "session_factory": SessionLocal,
@@ -849,15 +845,104 @@ def _articles_to_sources(articles: list[dict[str, Any]]) -> list[dict[str, Any]]
     ]
 
 
+def _outcome(
+    intent: str,
+    answer: str,
+    sources: list[dict[str, Any]] | None = None,
+    *,
+    selected_single: bool = False,
+    is_list: bool = False,
+) -> dict[str, Any]:
+    return {
+        "kind": "answer",
+        "intent": intent,
+        "answer": answer,
+        "sources": sources or [],
+        "selected_single": selected_single,
+        "is_list": is_list,
+    }
+
+
+def _with_note(outcome: dict[str, Any], note: str) -> dict[str, Any]:
+    """Prefix a short italic note to an answer or a streamed answer."""
+    if not note:
+        return outcome
+    if outcome.get("kind") == "qa_stream":
+        inner = outcome["stream"]
+
+        def noted_stream():
+            yield note
+            yield from inner
+
+        outcome["stream"] = noted_stream()
+    else:
+        outcome["answer"] = note + str(outcome.get("answer") or "")
+    return outcome
+
+
+def _article_context(target: dict[str, Any], content: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Article in the form the RAG prompt expects, with its publication details."""
+    content = content or {}
+    body = (content.get("body") or "").strip() or (content.get("sapo") or target.get("sapo") or "").strip()
+    if not body:
+        return None
+    return {
+        "article_id": target.get("article_id") or content.get("article_id"),
+        "title": content.get("title") or target.get("title") or "Bài báo",
+        "sapo": (content.get("sapo") or target.get("sapo") or "").strip(),
+        "source": content.get("source") or target.get("source", ""),
+        "category": content.get("category") or target.get("category", ""),
+        "url": content.get("url") or target.get("url", ""),
+        "published_at": content.get("published_at") or target.get("published_at", ""),
+        "published_at_display": content.get("published_at_display")
+        or target.get("published_at_display", ""),
+        "texts": [body],
+    }
+
+
+def _limit_sentences(text: str, max_sentences: int | None) -> str:
+    if not max_sentences:
+        return text
+    from processing.sentences import split_sentences
+
+    sentences = split_sentences(text)
+    return " ".join(sentences[:max_sentences]) if sentences else text
+
+
+def _checked_summary(summary: str | None, body: str, max_sentences: int | None) -> tuple[str, str]:
+    """Keep summary sentences whose names and numbers are in the article; respect the length.
+
+    If no sentence survives, the article's opening sentences are used instead.
+    Returns (summary, note for the reader).
+    """
+    from processing.fact_check import keep_supported_sentences
+
+    kept, dropped = keep_supported_sentences((summary or "").strip(), body)
+    note = ""
+    if dropped and kept:
+        note = f"\n\n*(Đã lược {dropped} câu có tên hoặc số liệu không có trong bài.)*"
+    if not kept.strip() and (summary or "").strip():
+        from processing.summarizers.extractive import LeadSummarizer
+
+        kept = LeadSummarizer(num_sentences=max_sentences or 2).summarize(body)
+        note = "\n\n*(Bản tóm tắt tự động có thông tin không khớp với bài nên đã dùng các câu mở đầu của bài.)*"
+    return _limit_sentences(kept.strip(), max_sentences), note
+
+
 def _handle_target_article(
     question: str,
     target: dict[str, Any],
     intent: str,
     *,
+    action: str | None = None,
+    max_sentences: int | None = None,
     preloaded_content: dict[str, Any] | None = None,
     stream_qa: bool = False,
 ) -> dict[str, Any]:
-    """Execute summarization, detail reading, or QA directly against one resolved article."""
+    """Summarize, read or answer a question about one resolved article.
+
+    ``action`` is "summary", "detail" or "qa"; without it the request wording decides.
+    """
     content = preloaded_content or get_article_content(
         article_id=target.get("article_id"),
         url=target.get("url"),
@@ -871,13 +956,12 @@ def _handle_target_article(
         sapo_only_note = "\n\n*(Lưu ý: bài báo chỉ có phần mở đầu trong cơ sở dữ liệu)*"
 
     if not body_text:
-        return {
-            "kind": "answer",
-            "intent": intent,
-            "answer": "Không tìm thấy toàn văn của bài báo được chọn trong database.",
-            "sources": [target],
-            "selected_single": True,
-        }
+        return _outcome(
+            intent,
+            "Không tìm thấy toàn văn của bài báo được chọn trong database.",
+            [target],
+            selected_single=True,
+        )
 
     selected = dict(target)
     selected["title"] = (content or {}).get("title") or target.get("title") or "Bài báo"
@@ -886,32 +970,31 @@ def _handle_target_article(
     selected.setdefault("category", (content or {}).get("category", ""))
     selected.setdefault("published_at_display", (content or {}).get("published_at_display", ""))
 
-    wants_summary, wants_detail = _wants_summary_or_detail(question, intent)
+    if action is None:
+        wants_summary, wants_detail = _wants_summary_or_detail(question, intent)
+        action = "summary" if wants_summary else "detail" if wants_detail else "qa"
 
-    if wants_summary:
-        summary = _summarize_with_optional_id(body_text, article_id=selected.get("article_id"))
-        if not summary or not summary.strip():
+    if action == "summary":
+        summary, check_note = _checked_summary(
+            _summarize_with_optional_id(body_text, article_id=selected.get("article_id")),
+            body_text,
+            max_sentences,
+        )
+        if not summary:
             answer = "Mô hình ViT5 chưa tạo được bản tóm tắt."
         else:
-            answer = f"## Tóm tắt: {selected['title']}\n\n{summary.strip()}{sapo_only_note}"
-        return {
-            "kind": "answer",
-            "intent": "summarization",
-            "answer": answer,
-            "sources": [selected],
-            "selected_single": True,
-        }
+            answer = f"## Tóm tắt: {selected['title']}\n\n{summary}{check_note}{sapo_only_note}"
+        return _outcome("summarization", answer, [selected], selected_single=True)
 
-    if wants_detail:
-        return {
-            "kind": "answer",
-            "intent": "article_detail",
-            "answer": f"## {selected['title']}\n\n{body_text}{sapo_only_note}",
-            "sources": [selected],
-            "selected_single": True,
-        }
+    if action == "detail":
+        return _outcome(
+            "article_detail",
+            f"## {selected['title']}\n\n{body_text}{sapo_only_note}",
+            [selected],
+            selected_single=True,
+        )
 
-    article_ctx = {
+    article_ctx = _article_context(selected, content) or {
         "article_id": selected.get("article_id"),
         "title": selected["title"],
         "sapo": raw_sapo,
@@ -926,16 +1009,578 @@ def _handle_target_article(
             "stream": stream_answer(question, [article_ctx]),
             "sources": [selected],
             "selected_single": True,
+            "is_list": False,
         }
-
     answer = generate_answer(question, [article_ctx])
-    return {
-        "kind": "answer",
-        "intent": "question_answering",
-        "answer": answer,
-        "sources": [selected],
-        "selected_single": True,
+    return _outcome("question_answering", answer, [selected], selected_single=True)
+
+
+def _answer_from_articles(
+    question: str,
+    contexts: list[dict[str, Any]],
+    *,
+    stream_qa: bool,
+) -> dict[str, Any]:
+    """Grounded answer over several articles (comparisons, follow-up questions)."""
+    contexts = _order_by_date(contexts)
+    sources = _articles_to_sources(contexts)
+    if stream_qa:
+        return {
+            "kind": "qa_stream",
+            "intent": "question_answering",
+            "stream": stream_answer(question, contexts),
+            "sources": sources,
+            "selected_single": False,
+            "is_list": False,
+        }
+    return _outcome("question_answering", generate_answer(question, contexts), sources)
+
+
+# --- Resolving which article a message means -------------------------------------
+
+
+_NO_LIST_MESSAGE = (
+    "Hiện chưa có danh sách bài báo nào trong cuộc trò chuyện. "
+    "Bạn hãy tìm kiếm chủ đề hoặc xem tin mới nhất trước khi chọn số thứ tự bài."
+)
+
+
+def _resolve_targets(
+    parsed: ParsedTurn,
+    state: ConversationState,
+) -> tuple[list[dict[str, Any]], str, str | None]:
+    """Articles the message points to: (targets, note for the reply, error message)."""
+    items = state.items
+    if parsed.item_refs:
+        if not items:
+            return [], "", _NO_LIST_MESSAGE
+        out_of_range = [ref for ref in parsed.item_refs if not 1 <= ref <= len(items)]
+        if out_of_range:
+            return [], "", (
+                f"Danh sách vừa rồi chỉ có {len(items)} bài báo "
+                f"(từ số 1 đến số {len(items)}). Bạn hãy chọn số thứ tự trong khoảng này."
+            )
+        note = ""
+        if state.empty_request is not None:
+            older = state.list_request.describe() if state.list_request else "danh sách trước"
+            note = (
+                f"*(Lần tìm gần nhất \"{state.empty_request.describe()}\" không có kết quả; "
+                f"số thứ tự theo danh sách trước: {older}.)*\n\n"
+            )
+        return [items[ref - 1] for ref in parsed.item_refs], note, None
+
+    if parsed.relative is None:
+        return [], "", None
+
+    current = state.current_article()
+    if parsed.relative == "current":
+        if current is not None:
+            return [current], "", None
+        last_was_answer = state.last is not None and state.last.intent == "question_answering"
+        if items and not last_was_answer:
+            return [items[0]], "", None
+        return [], "", None  # the caller decides: follow-up question or "nothing selected"
+
+    if not items:
+        return [], "", _NO_LIST_MESSAGE
+    if parsed.relative == "first":
+        return [items[0]], "", None
+    if parsed.relative == "last":
+        return [items[-1]], "", None
+    position = state.index_of(current)
+    if position is None:
+        if parsed.relative == "next":
+            return [items[0]], "", None
+        return [], "", "Bạn chưa mở bài nào trong danh sách nên chưa có bài trước đó."
+    step = 1 if parsed.relative == "next" else -1
+    new_position = position + step
+    if not 0 <= new_position < len(items):
+        edge = "cuối" if step > 0 else "đầu"
+        return [], "", f"Đây đã là bài {edge} của danh sách ({position + 1}/{len(items)})."
+    return [items[new_position]], "", None
+
+
+def _targets_cover_topic(targets: list[dict[str, Any]], parsed: ParsedTurn) -> bool:
+    """A number like "lần thứ 8" only points to an item when that item is about the question."""
+    if not parsed.topic_nouns:
+        return True
+    for target in targets:
+        content = get_article_content(article_id=target.get("article_id"), url=target.get("url")) or {}
+        text = " ".join(
+            str(value or "")
+            for value in (target.get("title"), target.get("sapo"), content.get("title"), content.get("body"))
+        )
+        if matched_keywords(parsed.topic_nouns, text, exact=parsed.exact_accents):
+            return True
+    return False
+
+
+def _target_action(question: str, parsed: ParsedTurn, intent: str) -> str:
+    wants_summary, wants_detail = _wants_summary_or_detail(question, "")
+    if wants_summary:
+        return "summary"
+    if wants_detail:
+        return "detail"
+    if parsed.max_sentences:
+        return "summary"
+    if parsed.is_question:
+        return "qa"
+    if intent == "summarization":
+        return "summary"
+    return "detail"
+
+
+# --- Lists -------------------------------------------------------------------------
+
+
+def _date_note(request: ListRequest) -> tuple[ListRequest, str]:
+    """Drop a date filter that lies outside the archive, with a note saying so."""
+    if request.date_from is None:
+        return request, ""
+    oldest, newest = get_archive_date_range()
+    if newest is not None and request.date_from > newest:
+        note = (
+            f"*(Dữ liệu chỉ có bài đến ngày {newest:%d/%m/%Y}, chưa có bài ngày "
+            f"{request.date_from:%d/%m/%Y}. Dưới đây là các bài mới nhất hiện có.)*\n\n"
+        )
+        return replace(request, date_from=None, date_to=None), note
+    if oldest is not None and request.date_to is not None and request.date_to < oldest:
+        note = f"*(Dữ liệu bắt đầu từ ngày {oldest:%d/%m/%Y}.)*\n\n"
+        return replace(request, date_from=None, date_to=None), note
+    return request, ""
+
+
+def _in_date_range(article: dict[str, Any], request: ListRequest) -> bool:
+    if request.date_from is None:
+        return True
+    raw = str(article.get("published_at") or "")[:10]
+    try:
+        published = date.fromisoformat(raw)
+    except ValueError:
+        return False
+    return request.date_from <= published <= (request.date_to or request.date_from)
+
+
+def _run_list_request(request: ListRequest, *, concise_list: bool) -> dict[str, Any]:
+    """Produce a list of articles for a latest / topic / category / keyword request."""
+    request, note = _date_note(request)
+    limit = request.count or 10
+    words = request.topic_words
+
+    if request.action == "latest" or (request.action in {"latest_topic", "search"} and not words):
+        latest_kwargs: dict[str, Any] = {}
+        for key, value in (
+            ("source", request.source),
+            ("category", request.category),
+            ("published_from", request.date_from),
+            ("published_to", request.date_to),
+        ):
+            if value is not None:
+                latest_kwargs[key] = value
+        articles, total_count, dated_count = _get_latest_news(limit=limit, **latest_kwargs)
+        answer = _format_latest_news(articles, total_count, dated_count, concise=concise_list)
+        return _with_note(_outcome("latest_news", answer, articles, is_list=True), note)
+
+    if request.action == "latest_topic":
+        topic_kwargs: dict[str, Any] = {}
+        if request.source is not None:
+            topic_kwargs["source"] = request.source
+        if request.category is not None:
+            topic_kwargs["category"] = request.category
+        articles, total_count, dated_count = _search_latest_topic_articles(
+            words,
+            limit=limit if request.date_from is None else max(limit, 50),
+            **topic_kwargs,
+        )
+        if request.date_from is not None:
+            articles = [a for a in articles if _in_date_range(a, request)][:limit]
+            dated_count = total_count = len(articles)
+        answer = _format_latest_topic_search(words, articles, total_count, dated_count, concise=concise_list)
+        return _with_note(_outcome("latest_topic_search", answer, articles, is_list=True), note)
+
+    if request.action == "category" and not words and request.category:
+        category_kwargs: dict[str, Any] = {"source": request.source} if request.source else {}
+        articles, total_count, category_found, available = _search_topic_articles(
+            request.category, limit=limit, **category_kwargs
+        )
+        label = CATEGORY_DISPLAY.get(request.category, request.category)
+        answer = _format_topic_search(label, articles, total_count, category_found, available, concise=concise_list)
+        return _with_note(_outcome("topic_search", answer, articles, is_list=True), note)
+
+    query = request.question or " ".join(words)
+    search_kwargs: dict[str, Any] = {}
+    if request.source is not None:
+        search_kwargs["source"] = request.source
+    if request.category is not None:
+        search_kwargs["category"] = request.category
+    sources = _search_sources(query, **search_kwargs)
+    sources = [s for s in sources if _in_date_range(s, request)][:limit]
+    return _with_note(
+        _outcome("semantic_search", _format_search_results(sources, concise=concise_list), sources, is_list=True),
+        note,
+    )
+
+
+def _narrow_current_list(
+    parsed: ParsedTurn,
+    state: ConversationState,
+    *,
+    concise_list: bool,
+) -> dict[str, Any]:
+    """"Trong những bài này, chỉ lấy bài về X": keep the listed articles about X."""
+    kept = []
+    for item in state.items:
+        content = get_article_content(article_id=item.get("article_id"), url=item.get("url")) or {}
+        text = " ".join(str(v or "") for v in (item.get("title"), item.get("sapo"), content.get("body")))
+        if matched_keywords(parsed.topic_nouns, text, exact=parsed.exact_accents):
+            kept.append(item)
+    words = " ".join(parsed.topic_nouns)
+    if kept:
+        answer = (
+            f"## {len(kept)}/{len(state.items)} bài trong danh sách vừa rồi nhắc đến {words}\n\n"
+            '💡 *Nhấn **✨ Tóm tắt**, **📖 Đọc bài**, **💬 Hỏi bài này** trên thẻ bên dưới, hoặc gõ **"Tóm tắt bài số 1"**.*'
+        )
+        if not concise_list:
+            answer = _format_search_results(kept, concise=False)
+        return _outcome("semantic_search", answer, kept, is_list=True)
+    base = state.list_request or ListRequest(action="search")
+    widened = replace(base, action="search", topic_words=list(parsed.topic_nouns), question=words)
+    outcome = _run_list_request(widened, concise_list=concise_list)
+    return _with_note(outcome, f"*(Danh sách vừa rồi không có bài nào nhắc đến {words}; tìm thêm trong dữ liệu.)*\n\n")
+
+
+# --- Questions ---------------------------------------------------------------------
+
+
+def _follow_up_answer(
+    question: str,
+    parsed: ParsedTurn,
+    state: ConversationState,
+    *,
+    stream_qa: bool,
+) -> tuple[dict[str, Any], list[str]]:
+    """Answer a question that points back to the previous turn ("dự án này ở tỉnh nào?")."""
+    last = state.last
+    previous_words = list(last.topic_words) if last else []
+    own_words = list(parsed.topic_words)
+    note = f"*(Hiểu là câu hỏi tiếp theo về: {' '.join(previous_words)})*\n\n" if previous_words else ""
+    llm_question = f"{question}\n(Câu hỏi trước đó: {last.question})" if last else question
+
+    contexts: list[dict[str, Any]] = []
+    for source in (last.sources if last else [])[:5]:
+        content = get_article_content(article_id=source.get("article_id"), url=source.get("url"))
+        ctx = _article_context(source, content)
+        if ctx is None:
+            continue
+        text = " ".join([ctx["title"], ctx["sapo"], *ctx["texts"]])
+        # "dự án này" names the previous subject explicitly: answer from its articles,
+        # even when the question words differ ("kinh phí" vs "tài trợ"). Without such a
+        # pointer, the earlier articles must contain the question's own words.
+        explicit_pointer = parsed.relative == "current"
+        covered = len(matched_keywords(own_words, text, exact=parsed.exact_accents)) == len(set(own_words))
+        if explicit_pointer or not own_words or covered:
+            contexts.append(ctx)
+    if contexts:
+        outcome = _answer_from_articles(llm_question, contexts, stream_qa=stream_qa)
+        return _with_note(outcome, note), previous_words + own_words
+
+    expanded = " ".join(previous_words + own_words) or question
+    chunks = retrieve(expanded)
+    if not chunks:
+        return _outcome("question_answering", "Tôi chưa tìm thấy bài báo phù hợp để trả lời câu hỏi này."), own_words
+    articles = group_chunks_by_article(chunks)
+    return _with_note(_answer_from_articles(llm_question, articles, stream_qa=stream_qa), note), previous_words + own_words
+
+
+def _question_answer(
+    question: str,
+    parsed: ParsedTurn,
+    *,
+    source: str | None,
+    category: str | None,
+    stream_qa: bool,
+) -> dict[str, Any]:
+    clean_qa = _strip_source_mentions(question) if source else question
+    effective_qa = clean_qa or question
+    if not stream_qa:
+        ask_kwargs: dict[str, Any] = {}
+        if source is not None:
+            ask_kwargs["source"] = source
+        if category is not None:
+            ask_kwargs["category"] = category
+        result = ask(effective_qa, **ask_kwargs)
+        return _outcome(
+            "question_answering",
+            result.get("answer", "Chưa tạo được câu trả lời."),
+            result.get("sources", []) or [],
+        )
+
+    retrieve_kwargs: dict[str, Any] = {}
+    if source is not None:
+        retrieve_kwargs["source"] = source
+    if category is not None:
+        retrieve_kwargs["category"] = category
+    chunks = retrieve(effective_qa, **retrieve_kwargs)
+    if not chunks:
+        return _outcome("question_answering", "Tôi chưa tìm thấy bài báo phù hợp để trả lời câu hỏi này.")
+    articles = group_chunks_by_article(chunks)
+    return _answer_from_articles(effective_qa, articles, stream_qa=True)
+
+
+# --- The turn ------------------------------------------------------------------------
+
+
+def _decide(
+    question: str,
+    parsed: ParsedTurn,
+    state: ConversationState,
+    *,
+    source_filter: str | None,
+    category_filter: str | None,
+    concise_list: bool,
+    stream_qa: bool,
+) -> tuple[dict[str, Any], TurnRecord]:
+    source = parsed.source or source_filter
+    category = parsed.category or category_filter
+    record = TurnRecord(
+        question=question,
+        intent="",
+        topic_words=list(parsed.topic_words),
+        max_sentences=parsed.max_sentences,
+    )
+    intent = predict_intent(question)
+
+    # Small talk: trusted only when the message has no topic of its own.
+    small_talk_words = conversation_words()
+    if intent in {"greeting", "introduction"} and all(
+        word in small_talk_words for word in parsed.topic_words
+    ) and not (parsed.item_refs or parsed.relative):
+        if intent == "greeting":
+            answer = (
+                "Xin chào! Tôi là Trợ lý đọc báo thông minh. "
+                "Tôi có thể giúp bạn tìm kiếm, tóm tắt và hỏi đáp "
+                "về các bài báo tiếng Việt."
+            )
+        else:
+            answer = INTRODUCTION_RESPONSE
+        return _outcome(intent, answer), record
+
+    # 1. A specific article: number, position or "bài này".
+    targets, note, error = _resolve_targets(parsed, state)
+    if error:
+        return _outcome(intent, error), record
+    if targets and parsed.item_refs and not _targets_cover_topic(targets, parsed):
+        targets, note = [], ""  # "lần thứ 8" in a question about something else
+    if targets:
+        action = _target_action(question, parsed, intent)
+        if action == "qa" and len(targets) > 1:
+            contexts = [
+                ctx
+                for target in targets
+                if (ctx := _article_context(target, get_article_content(
+                    article_id=target.get("article_id"), url=target.get("url")
+                ))) is not None
+            ]
+            return _with_note(_answer_from_articles(question, contexts, stream_qa=stream_qa), note), record
+        outcome = _handle_target_article(
+            question,
+            targets[-1],  # in "không phải bài 1, ý tôi là bài 2" the last number wins
+            intent,
+            action=action,
+            max_sentences=parsed.max_sentences,
+            stream_qa=stream_qa,
+        )
+        return _with_note(outcome, note), record
+    if parsed.relative == "current" and not parsed.is_question and state.current_article() is None and not state.items:
+        return _outcome(
+            intent,
+            "Hiện chưa có bài báo nào đang được chọn. Bạn hãy tìm kiếm hoặc chọn một bài báo trước nhé.",
+        ), record
+    wants_summary, wants_detail = _wants_summary_or_detail(question, intent)
+    if (wants_summary or wants_detail) and not parsed.topic_nouns and not parsed.is_question:
+        # "Tóm tắt giúp tôi": the open article, else the first in the list.
+        target = state.current_article() or (state.items[0] if state.items else None)
+        if target is not None:
+            return _handle_target_article(
+                question, target, intent,
+                action="summary" if wants_summary else "detail",
+                max_sentences=parsed.max_sentences, stream_qa=stream_qa,
+            ), record
+        return _outcome(
+            intent,
+            "Bạn muốn tóm tắt hoặc xem chi tiết bài báo nào? "
+            "Hãy tìm một chủ đề trước hoặc nhấn nút **✨ Tóm tắt** trên thẻ bài báo nhé.",
+        ), record
+    if parsed.relative == "current" and not parsed.is_question and state.last is None:
+        return _outcome(
+            intent,
+            "Hiện chưa có bài báo nào đang được chọn. Bạn hãy tìm kiếm hoặc chọn một bài báo trước nhé.",
+        ), record
+
+    # 2. A refinement of the previous turn: new filters, count or length, no new subject.
+    last = state.last
+    asks_for_new_list = _has_latest_cue(question) or _has_search_cue(question) or _has_topic_search_cue(question)
+    if (
+        last is not None
+        and not parsed.topic_nouns
+        and not asks_for_new_list
+        and (parsed.has_slots or parsed.refers_to_list)
+    ):
+        if parsed.max_sentences and last.target is not None and last.intent == "summarization":
+            outcome = _handle_target_article(
+                question, last.target, "summarization", action="summary",
+                max_sentences=parsed.max_sentences, stream_qa=stream_qa,
+            )
+            return outcome, record
+        base = state.list_request or last.request
+        if base is not None and (parsed.source or parsed.category or parsed.count or parsed.date_from):
+            merged = replace(
+                base,
+                source=parsed.source or base.source,
+                category=parsed.category or base.category,
+                count=parsed.count or base.count,
+                date_from=parsed.date_from or base.date_from,
+                date_to=parsed.date_to or base.date_to,
+            )
+            record.request = merged
+            record.topic_words = list(merged.topic_words)
+            outcome = _run_list_request(merged, concise_list=concise_list)
+            return _with_note(outcome, f"*(Lọc lại: {merged.describe()})*\n\n"), record
+
+    # 3. Narrow the current list to a subject: "trong những bài này, chỉ lấy bài về Arsenal".
+    if parsed.refers_to_list and parsed.topic_nouns and state.items:
+        return _narrow_current_list(parsed, state, concise_list=concise_list), record
+
+    # 4. A question about the news.
+    current = state.current_article()
+    asks = parsed.is_question and not _has_search_cue(question) and not _has_latest_cue(question)
+    if asks and not (parsed.category and _has_topic_search_cue(question)):
+        if current is not None and not _has_search_cue(question):
+            specific_tokens = _extract_content_tokens(question, include_qa_generic=True)
+            active_content = get_article_content(article_id=current.get("article_id"), url=current.get("url"))
+            if not specific_tokens or _article_covers_question(question, specific_tokens, current, content=active_content):
+                outcome = _handle_target_article(
+                    question, current, "question_answering", action="qa",
+                    preloaded_content=active_content, stream_qa=stream_qa,
+                )
+                return outcome, record
+        points_back = parsed.relative == "current" or not parsed.topic_nouns
+        if points_back and last is not None and last.topic_words:
+            outcome, record.topic_words = _follow_up_answer(question, parsed, state, stream_qa=stream_qa)
+            return outcome, record
+        return _question_answer(question, parsed, source=source, category=category, stream_qa=stream_qa), record
+
+    # 5. A list: category, latest news, latest on a topic, or a keyword search.
+    request = ListRequest(
+        action="search",
+        topic_words=list(parsed.topic_words),
+        source=source,
+        category=category,
+        count=parsed.count,
+        date_from=parsed.date_from,
+        date_to=parsed.date_to,
+        question=question,
+    )
+    if _has_topic_search_cue(question) or (intent == "topic_search" and parsed.category):
+        if parsed.category is None and not parsed.topic_words:
+            labels = ", ".join(label.lower() for label in CATEGORY_DISPLAY.values())
+            return _outcome(intent, f"Bạn hãy nêu rõ một chuyên mục, ví dụ: {labels}."), record
+        if parsed.category is None:
+            # A category the data does not have: search its words across all articles.
+            record.request = replace(request, action="search")
+            outcome = _run_list_request(record.request, concise_list=concise_list)
+            words = " ".join(parsed.topic_words)
+            return _with_note(outcome, f"*(Dữ liệu không có chuyên mục \"{words}\"; đây là các bài nhắc đến {words}.)*\n\n"), record
+        record.request = replace(request, action="category")
+    elif _has_latest_cue(question) or parsed.date_from is not None or (
+        intent in {"latest_news", "latest_topic_search"} and not _has_search_cue(question)
+    ):
+        record.request = replace(request, action="latest_topic" if parsed.topic_words else "latest")
+    elif intent in {"summarization", "article_detail"} and not _has_search_cue(question):
+        return _search_then_open(question, intent, source=source, category=category), record
+    else:
+        record.request = request
+    return _run_list_request(record.request, concise_list=concise_list), record
+
+
+def _search_then_open(question: str, intent: str, *, source: str | None, category: str | None) -> dict[str, Any]:
+    """"Tóm tắt bài về X": find the best article about X, then summarize or show it."""
+    search_kwargs: dict[str, Any] = {}
+    if source is not None:
+        search_kwargs["source"] = source
+    if category is not None:
+        search_kwargs["category"] = category
+    sources = _search_sources(question, **search_kwargs)
+    source_item, content = _find_source_with_body(sources)
+    if content is None:
+        return _outcome(intent, _empty_retrieval_message(intent), sources)
+    return _handle_target_article(
+        question,
+        source_item,
+        intent,
+        action="summary" if intent == "summarization" else "detail",
+        preloaded_content=content,
+    )
+
+
+def respond(
+    question: str,
+    state: ConversationState,
+    *,
+    source_filter: str | None = None,
+    category_filter: str | None = None,
+    concise_list: bool = True,
+    stream_qa: bool = True,
+    today: date | None = None,
+) -> dict[str, Any]:
+    """Answer one message and update ``state``.
+
+    Returns the outcome dict used by the app: ``kind`` ("answer" or "qa_stream"),
+    ``intent``, ``answer`` or ``stream``, ``sources``, ``selected_single``.
+    """
+    if not question or not question.strip():
+        return _outcome("empty", "Bạn hãy nhập yêu cầu cần xử lý.")
+    parsed = parse_turn(question, today)
+    outcome, record = _decide(
+        question,
+        parsed,
+        state,
+        source_filter=source_filter,
+        category_filter=category_filter,
+        concise_list=concise_list,
+        stream_qa=stream_qa,
+    )
+    record.intent = outcome.get("intent", "")
+    print(f"[INTENT] {record.intent} | {question} | {describe_turn(parsed)}")
+    state.record(record, outcome)
+    return outcome
+
+
+def respond_on_article(
+    question: str,
+    article: dict[str, Any],
+    action: str,
+    state: ConversationState,
+    *,
+    stream_qa: bool = True,
+) -> dict[str, Any]:
+    """A button on an article card: "summarize", "detail" or "qa" for that article."""
+    mapping = {
+        "summarize": ("summary", "summarization"),
+        "detail": ("detail", "article_detail"),
+        "qa": ("qa", "question_answering"),
     }
+    handler_action, intent = mapping.get(action, mapping["summarize"])
+    outcome = _handle_target_article(question, article, intent, action=handler_action, stream_qa=stream_qa)
+    parsed = parse_turn(question)
+    record = TurnRecord(
+        question=question,
+        intent=outcome.get("intent", intent),
+        topic_words=list(parsed.topic_words),
+        max_sentences=parsed.max_sentences,
+    )
+    state.record(record, outcome)
+    return outcome
 
 
 def _execute_turn_plan(
@@ -948,365 +1593,19 @@ def _execute_turn_plan(
     category_filter: str | None = None,
     concise_list: bool = False,
     stream_qa: bool = False,
+    state: ConversationState | None = None,
 ) -> dict[str, Any]:
-    """Resolve intent and return either an immediate answer or a QA token stream."""
-    if not question or not question.strip():
-        return {
-            "kind": "answer",
-            "intent": "empty",
-            "answer": "Bạn hãy nhập yêu cầu cần xử lý.",
-            "sources": [],
-            "selected_single": False,
-        }
-
-    effective_source = _extract_source(question) or source_filter
-    intent = predict_intent(question)
-
-    detected_topic = _extract_topic(question)
-    if detected_topic and _has_topic_search_cue(question):
-        intent = "topic_search"
-    elif _has_latest_cue(question):
-        intent = "latest_topic_search" if _extract_latest_topic_terms(question) else "latest_news"
-    elif (
-        intent not in {"greeting", "introduction", "summarization", "article_detail"}
-        and _has_search_cue(question)
-    ):
-        intent = "semantic_search"
-    elif intent in _SEARCH_INTENTS and _has_question_cue(question):
-        # The classifier has few question examples; a question word without a
-        # search phrase ("Vì sao giá vàng tăng?") asks for an answer, not a list.
-        intent = "question_answering"
-    elif intent == "latest_topic_search":
-        intent = "semantic_search"
-
-    print(f"[INTENT] {intent} | {question}")
-
-    if intent == "greeting":
-        return {
-            "kind": "answer",
-            "intent": intent,
-            "answer": (
-                "Xin chào! Tôi là Trợ lý đọc báo thông minh. "
-                "Tôi có thể giúp bạn tìm kiếm, tóm tắt và hỏi đáp "
-                "về các bài báo tiếng Việt."
-            ),
-            "sources": [],
-            "selected_single": False,
-        }
-
-    if intent == "introduction":
-        return {
-            "kind": "answer",
-            "intent": intent,
-            "answer": INTRODUCTION_RESPONSE,
-            "sources": [],
-            "selected_single": False,
-        }
-
-    # 1. Explicit ordinal, demonstrative, or in-list source reference.
-    ref_article, matched_ref, ref_error = _resolve_reference_article(
+    """Compatibility entry point taking the older separate context values."""
+    if state is None:
+        state = ConversationState.from_legacy(context_sources, pinned_article, active_article)
+    return respond(
         question,
-        context_sources=context_sources,
-        pinned_article=pinned_article,
-        active_article=active_article,
+        state,
+        source_filter=source_filter,
+        category_filter=category_filter,
+        concise_list=concise_list,
+        stream_qa=stream_qa,
     )
-    if matched_ref:
-        if ref_error:
-            return {
-                "kind": "answer",
-                "intent": intent,
-                "answer": ref_error,
-                "sources": [],
-                "selected_single": False,
-            }
-        if ref_article is not None:
-            return _handle_target_article(
-                question,
-                ref_article,
-                intent,
-                stream_qa=stream_qa,
-            )
-
-    # 2. Bare follow-up without explicit target (e.g., "Tóm tắt giúp tôi", "Đọc chi tiết").
-    if _is_bare_followup_request(question, intent):
-        target = pinned_article or active_article or (context_sources[0] if context_sources else None)
-        if target is None:
-            return {
-                "kind": "answer",
-                "intent": intent,
-                "answer": (
-                    "Bạn muốn tóm tắt hoặc xem chi tiết bài báo nào? "
-                    "Hãy tìm một chủ đề trước hoặc nhấn nút **✨ Tóm tắt** trên thẻ bài báo nhé."
-                ),
-                "sources": [],
-                "selected_single": False,
-            }
-        return _handle_target_article(question, target, intent, stream_qa=stream_qa)
-
-    # 3. Explicitly pinned article takes precedence for follow-ups.
-    if (
-        pinned_article is not None
-        and intent not in {"latest_news", "topic_search", "latest_topic_search"}
-        and not _has_search_cue(question)
-    ):
-        return _handle_target_article(question, pinned_article, intent, stream_qa=stream_qa)
-
-    # 4. Implicit follow-up QA on the active article when user continues asking about it.
-    if (
-        active_article is not None
-        and intent == "question_answering"
-        and not _has_search_cue(question)
-        and not _has_latest_cue(question)
-        and not _has_topic_search_cue(question)
-    ):
-        explicit_src = _extract_source(question)
-        active_src = (active_article.get("source") or "").casefold()
-        if not explicit_src or explicit_src == active_src:
-            specific_tokens = _extract_content_tokens(question, include_qa_generic=True)
-            active_content = get_article_content(
-                article_id=active_article.get("article_id"),
-                url=active_article.get("url"),
-            )
-            if not specific_tokens or _article_covers_question(
-                question, specific_tokens, active_article, content=active_content
-            ):
-                return _handle_target_article(
-                    question,
-                    active_article,
-                    intent,
-                    preloaded_content=active_content,
-                    stream_qa=stream_qa,
-                )
-
-    if intent == "latest_news":
-        if effective_source is None and category_filter is None:
-            articles, total_count, dated_count = _get_latest_news(limit=10)
-        else:
-            articles, total_count, dated_count = _get_latest_news(
-                limit=10,
-                source=effective_source,
-                category=category_filter,
-            )
-        answer = _format_latest_news(articles, total_count, dated_count, concise=concise_list)
-        return {
-            "kind": "answer",
-            "intent": intent,
-            "answer": answer,
-            "sources": articles,
-            "selected_single": False,
-        }
-
-    if intent == "latest_topic_search":
-        terms = _extract_latest_topic_terms(question)
-        if not terms:
-            if effective_source is None and category_filter is None:
-                articles, total_count, dated_count = _get_latest_news(limit=10)
-            else:
-                articles, total_count, dated_count = _get_latest_news(
-                    limit=10,
-                    source=effective_source,
-                    category=category_filter,
-                )
-            return {
-                "kind": "answer",
-                "intent": "latest_news",
-                "answer": _format_latest_news(
-                    articles, total_count, dated_count, concise=concise_list
-                ),
-                "sources": articles,
-                "selected_single": False,
-            }
-
-        if effective_source is None and category_filter is None:
-            articles, total_count, dated_count = _search_latest_topic_articles(terms, limit=10)
-        else:
-            articles, total_count, dated_count = _search_latest_topic_articles(
-                terms,
-                limit=10,
-                source=effective_source,
-                category=category_filter,
-            )
-        answer = _format_latest_topic_search(
-            terms, articles, total_count, dated_count, concise=concise_list
-        )
-        return {
-            "kind": "answer",
-            "intent": intent,
-            "answer": answer,
-            "sources": articles,
-            "selected_single": False,
-        }
-
-    if intent == "topic_search":
-        topic = _extract_topic(question)
-        if topic is None:
-            return {
-                "kind": "answer",
-                "intent": intent,
-                "answer": (
-                    "Bạn hãy nêu rõ một chuyên mục, ví dụ: kinh tế, công nghệ, "
-                    "thể thao, giải trí, giáo dục hoặc y tế."
-                ),
-                "sources": [],
-                "selected_single": False,
-            }
-
-        if effective_source is None:
-            articles, total_count, category_found, available_categories = _search_topic_articles(
-                topic,
-                limit=10,
-            )
-        else:
-            articles, total_count, category_found, available_categories = _search_topic_articles(
-                topic,
-                limit=10,
-                source=effective_source,
-            )
-        answer = _format_topic_search(
-            topic,
-            articles,
-            total_count,
-            category_found,
-            available_categories,
-            concise=concise_list,
-        )
-        return {
-            "kind": "answer",
-            "intent": intent,
-            "answer": answer,
-            "sources": articles,
-            "selected_single": False,
-        }
-
-    if intent in {"semantic_search", "summarization", "article_detail"}:
-        if effective_source is None and category_filter is None:
-            sources = _search_sources(question)
-        else:
-            search_kwargs: dict[str, Any] = {}
-            if effective_source is not None:
-                search_kwargs["source"] = effective_source
-            if category_filter is not None:
-                search_kwargs["category"] = category_filter
-            sources = _search_sources(question, **search_kwargs)
-
-        if intent == "semantic_search":
-            return {
-                "kind": "answer",
-                "intent": intent,
-                "answer": _format_search_results(sources, concise=concise_list),
-                "sources": sources,
-                "selected_single": False,
-            }
-
-        source_item, content = _find_source_with_body(sources)
-        if content is None:
-            return {
-                "kind": "answer",
-                "intent": intent,
-                "answer": _empty_retrieval_message(intent),
-                "sources": sources,
-                "selected_single": False,
-            }
-
-        title = content.get("title") or source_item.get("title") or "Bài báo"
-        selected_source = dict(source_item)
-        selected_source["title"] = title
-        raw_body = (content.get("body") or "").strip()
-        raw_sapo = (content.get("sapo") or source_item.get("sapo") or "").strip()
-        body_text = raw_body or raw_sapo
-        sapo_only_note = (
-            "\n\n*(Lưu ý: bài báo chỉ có phần mở đầu trong cơ sở dữ liệu)*"
-            if (not raw_body and raw_sapo)
-            else ""
-        )
-
-        if intent == "article_detail":
-            if not body_text:
-                return {
-                    "kind": "answer",
-                    "intent": intent,
-                    "answer": _empty_retrieval_message(intent),
-                    "sources": [],
-                    "selected_single": False,
-                }
-            return {
-                "kind": "answer",
-                "intent": intent,
-                "answer": f"## {title}\n\n{body_text}{sapo_only_note}",
-                "sources": [selected_source],
-                "selected_single": True,
-            }
-
-        summary = _summarize_with_optional_id(
-            body_text,
-            article_id=selected_source.get("article_id"),
-        )
-        if not summary or not summary.strip():
-            answer = "Mô hình ViT5 chưa tạo được bản tóm tắt."
-        else:
-            answer = f"## Tóm tắt: {title}\n\n{summary.strip()}{sapo_only_note}"
-        return {
-            "kind": "answer",
-            "intent": intent,
-            "answer": answer,
-            "sources": [selected_source],
-            "selected_single": True,
-        }
-
-    # Question Answering (Hybrid RAG + Qwen)
-    clean_qa = _strip_source_mentions(question) if effective_source else question
-    effective_qa = clean_qa or question
-
-    if not stream_qa:
-        ask_kwargs: dict[str, Any] = {}
-        if effective_source is not None:
-            ask_kwargs["source"] = effective_source
-        if category_filter is not None:
-            ask_kwargs["category"] = category_filter
-        result = ask(effective_qa, **ask_kwargs)
-        return {
-            "kind": "answer",
-            "intent": "question_answering",
-            "answer": result.get("answer", "Chưa tạo được câu trả lời."),
-            "sources": result.get("sources", []) or [],
-            "selected_single": False,
-        }
-
-    retrieve_kwargs: dict[str, Any] = {}
-    if effective_source is not None:
-        retrieve_kwargs["source"] = effective_source
-    if category_filter is not None:
-        retrieve_kwargs["category"] = category_filter
-    chunks = retrieve(effective_qa, **retrieve_kwargs)
-    if not chunks:
-        return {
-            "kind": "answer",
-            "intent": "question_answering",
-            "answer": "Tôi chưa tìm thấy bài báo phù hợp để trả lời câu hỏi này.",
-            "sources": [],
-            "selected_single": False,
-        }
-
-    articles = group_chunks_by_article(chunks)
-    sources = _articles_to_sources(articles)
-    if asks_for_financial_amount(effective_qa) and not has_financial_evidence(effective_qa, articles):
-        from rag.pipeline import FINANCE_NOT_FOUND_MESSAGE
-
-        return {
-            "kind": "answer",
-            "intent": "question_answering",
-            "answer": FINANCE_NOT_FOUND_MESSAGE,
-            "sources": sources,
-            "selected_single": False,
-        }
-
-    return {
-        "kind": "qa_stream",
-        "intent": "question_answering",
-        "stream": stream_answer(effective_qa, articles),
-        "sources": sources,
-        "selected_single": False,
-    }
 
 
 def prepare_turn_response(
@@ -1317,6 +1616,7 @@ def prepare_turn_response(
     source_filter: str | None = None,
     category_filter: str | None = None,
     concise_list: bool = True,
+    state: ConversationState | None = None,
 ) -> dict[str, Any]:
     """UI-oriented entry point returning either a complete answer or a live Qwen token stream."""
     return _execute_turn_plan(
@@ -1328,6 +1628,7 @@ def prepare_turn_response(
         category_filter=category_filter,
         concise_list=concise_list,
         stream_qa=True,
+        state=state,
     )
 
 
@@ -1339,6 +1640,7 @@ def handle_intent(
     category_filter: str | None = None,
     active_article: dict[str, Any] | None = None,
     concise_list: bool = False,
+    state: ConversationState | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Dự đoán ý định và điều phối tới chức năng phù hợp."""
     outcome = _execute_turn_plan(
@@ -1350,5 +1652,6 @@ def handle_intent(
         category_filter=category_filter,
         concise_list=concise_list,
         stream_qa=False,
+        state=state,
     )
     return outcome["answer"], outcome["sources"]

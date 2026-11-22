@@ -18,10 +18,11 @@ import streamlit.components.v1 as components
 from streamlit_webrtc import WebRtcMode, webrtc_streamer
 
 from database.repository import get_article_content, get_article_count, get_latest_articles
+from nlp.conversation_state import ConversationState, ListRequest
 from nlp.intent_handler import (
     _format_latest_news,
-    _handle_target_article,
     prepare_turn_response,
+    respond_on_article,
 )
 from voice.reading_text import build_reading_text
 from voice.speech_to_text import SpeechRecognitionError, transcribe_audio
@@ -384,6 +385,7 @@ def show_article_dialog(source_item: dict[str, Any], mode: str = "read") -> None
         if st.button("💬 Ghim vào chat để hỏi tiếp", key="dlg_pin_article", use_container_width=True):
             st.session_state.pinned_article = dict(source_item)
             st.session_state.active_article = dict(source_item)
+            st.session_state.conv_state.select(source_item, "pin")
             st.session_state.toast_notice = f"📌 Đã ghim: {title[:60]}"
             st.rerun()
 
@@ -509,6 +511,7 @@ def _render_single_source_card(
         with col1:
             if st.button("📖 Đọc bài", key=f"read_{message_key}_{index}", use_container_width=True):
                 st.session_state.active_article = source
+                st.session_state.conv_state.select(source, "open")
                 show_article_dialog(source, mode="read")
         with col2:
             if st.button("✨ Tóm tắt", key=f"sum_{message_key}_{index}", use_container_width=True):
@@ -524,6 +527,7 @@ def _render_single_source_card(
             if st.button("💬 Hỏi bài này", key=f"pin_{message_key}_{index}", use_container_width=True):
                 st.session_state.pinned_article = source
                 st.session_state.active_article = source
+                st.session_state.conv_state.select(source, "pin")
                 st.session_state.toast_notice = (
                     f"📌 Đã ghim: {_short_title(title, 52)}. Hãy chọn gợi ý bên dưới hoặc nhập câu hỏi!"
                 )
@@ -564,8 +568,10 @@ def render_sources(
                 st.session_state.expanded_history_message_id = message_key
                 if len(sources) > 1:
                     st.session_state.last_search_sources = sources
+                    st.session_state.conv_state.set_list(sources, None)
                 else:
                     st.session_state.active_article = sources[0]
+                    st.session_state.conv_state.select(sources[0], "open")
                 st.rerun()
         return
 
@@ -688,26 +694,19 @@ def _execute_pending_turn(pending: dict[str, Any]) -> None:
         try:
             with st.spinner("⏳ Đang tìm kiếm và tổng hợp thông tin..."):
                 if target_article is not None:
-                    action_to_intent = {
-                        "summarize": "summarization",
-                        "detail": "article_detail",
-                        "qa": "question_answering",
-                    }
-                    outcome = _handle_target_article(
+                    outcome = respond_on_article(
                         question,
                         target_article,
-                        action_to_intent.get(str(target_action), "summarization"),
-                        stream_qa=True,
+                        str(target_action or "summarize"),
+                        st.session_state.conv_state,
                     )
                 else:
                     outcome = prepare_turn_response(
                         question,
-                        context_sources=st.session_state.last_search_sources,
-                        pinned_article=st.session_state.pinned_article,
-                        active_article=st.session_state.active_article,
                         source_filter=source_filter,
                         category_filter=category_filter,
                         concise_list=True,
+                        state=st.session_state.conv_state,
                     )
 
             if outcome.get("kind") == "qa_stream":
@@ -741,10 +740,11 @@ def _execute_pending_turn(pending: dict[str, Any]) -> None:
             selected_single = False
             intent_name = "error"
 
+    conv_state = st.session_state.conv_state
+    st.session_state.last_search_sources = list(conv_state.items)
     if selected_single and sources:
         st.session_state.active_article = sources[0]
     elif sources:
-        st.session_state.last_search_sources = sources
         st.session_state.active_article = None
 
     assistant_message: dict[str, Any] = {
@@ -798,6 +798,9 @@ def browse_filtered_news(*, speak_response: bool = False) -> None:
     if articles:
         st.session_state.last_search_sources = articles
         st.session_state.active_article = None
+        st.session_state.conv_state.set_list(
+            articles, ListRequest(action="latest", source=src_slug, category=cat_slug)
+        )
 
     st.session_state.messages.append(
         {"id": str(uuid.uuid4()), "role": "user", "content": prompt_label}
@@ -878,6 +881,7 @@ state_defaults: dict[str, Any] = {
     "last_search_sources": [],
     "active_article": None,
     "pinned_article": None,
+    "conv_state": None,
     "pending_turn": None,
     "expanded_history_message_id": None,
     "toast_notice": None,
@@ -900,6 +904,9 @@ state_defaults: dict[str, Any] = {
 for key, value in state_defaults.items():
     if key not in st.session_state:
         st.session_state[key] = value
+if st.session_state.conv_state is None:
+    # One shared record of the shown list, selections and last turn (nlp/conversation_state.py).
+    st.session_state.conv_state = ConversationState()
 
 try:
     total_articles = initialize_system()
@@ -963,6 +970,7 @@ with st.sidebar:
         st.session_state.last_search_sources = []
         st.session_state.active_article = None
         st.session_state.pinned_article = None
+        st.session_state.conv_state = ConversationState()
         st.session_state.pending_turn = None
         st.session_state.expanded_history_message_id = None
         st.session_state.dialog_tts = None
@@ -1056,6 +1064,7 @@ if st.session_state.pinned_article is not None:
     with pin_col2:
         if st.button("✕ Bỏ ghim", use_container_width=True):
             st.session_state.pinned_article = None
+            st.session_state.conv_state.unpin()
             st.rerun()
 
 # Contextual quick follow-up chips right above the input bar.
@@ -1099,10 +1108,12 @@ if focus_article is not None:
             if st.button("🔙 Về danh sách", key="chip_back_to_list", use_container_width=True):
                 st.session_state.active_article = None
                 st.session_state.pinned_article = None
+                st.session_state.conv_state.deselect()
                 st.rerun()
         elif st.session_state.pinned_article is not None:
             if st.button("✕ Bỏ ghim", key="chip_unpin", use_container_width=True):
                 st.session_state.pinned_article = None
+                st.session_state.conv_state.unpin()
                 st.rerun()
 elif search_list:
     st.caption("💬 Chọn nhanh bài báo trong danh sách vừa tìm:")
