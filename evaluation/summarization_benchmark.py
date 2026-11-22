@@ -35,6 +35,7 @@ from evaluation.significance import (
     default_baseline,
     group_rows,
 )
+from processing.fact_check import fact_support
 from processing.summarizers import AVAILABLE_SYSTEMS, build_summarizer
 
 DEFAULT_SYSTEMS = "lead,textrank,phobert,vit5_app,vit5"
@@ -85,6 +86,8 @@ def evaluate_system(
                 "summary_words": len(summary.split()),
                 "document_words": len(example.document.split()),
                 "latency_seconds": latency,
+                # Share of the summary's numbers and names found in the article (None: it has none).
+                "fact_support": fact_support(summary, example.document),
                 **scores,
             }
             rows.append(row)
@@ -115,6 +118,7 @@ def evaluate_system(
         ),
         "corpus_bleu": corpus_bleu([e.reference for e in examples], [r["summary"] for r in rows]),
         "mean_sentence_bleu": _mean([r["bleu"] for r in rows]),
+        "mean_fact_support": _mean([r["fact_support"] for r in rows if r["fact_support"] is not None]),
     }
     for metric in ("rouge1", "rouge2", "rougeL"):
         for part in ("p", "r", "f1"):
@@ -175,17 +179,18 @@ def write_summary_tables(output_dir: Path, report: dict[str, Any]) -> None:
         "",
         "## Full-length outputs",
         "",
-        "| System | Type | ROUGE-1 | ROUGE-2 | ROUGE-L | BLEU | Words | s/article |",
-        "|---|---|---|---|---|---|---|---|",
+        "| System | Type | ROUGE-1 | ROUGE-2 | ROUGE-L | BLEU | Facts in source | Words | s/article |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for key, result in systems.items():
         if result.get("status") != "ok":
-            lines.append(f"| {key} | - | error: {result.get('error', '')} | | | | | |")
+            lines.append(f"| {key} | - | error: {result.get('error', '')} | | | | | | |")
             continue
         lines.append(
             f"| {result['config']['name']} | {result['config']['kind']} "
             f"| {cell(result, 'rouge1_f1')} | {cell(result, 'rouge2_f1')} "
             f"| {cell(result, 'rougeL_f1')} | {100 * result['corpus_bleu']:.2f} "
+            f"| {100 * result.get('mean_fact_support', 0.0):.1f}% "
             f"| {result['mean_summary_words']:.1f} | {result['mean_latency_seconds']:.3f} |"
         )
 

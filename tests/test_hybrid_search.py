@@ -426,27 +426,44 @@ class TestDenseFilterAndFinanceEvidence(unittest.TestCase):
 
         self.assertEqual([r["article_id"] for r in results], ["lex-1", "para-1"])
 
-    def _expressway_article(self, sentence: str) -> list[dict]:
-        return [
+    def test_answer_sentences_with_unsupported_numbers_are_held_back(self):
+        articles = [
             {
-                "title": "Cao tốc Bắc Nam được bổ sung ngân sách",
-                "texts": [f"Bộ Giao thông vận tải vừa có tờ trình. {sentence}"],
-            }
+                "title": "Khánh thành cụm 11 công trình vệ sinh đạt chuẩn ở Sơn La",
+                "source": "vnexpress",
+                "published_at": "2026-10-24 08:00:00",
+                "texts": ["Quỹ Hy vọng bàn giao 11 công trình tại 6 xã, tổng tài trợ gần 3 tỷ đồng."],
+            },
+            {
+                "title": "Hơn 5.000 dự án với tổng vốn 3,5 triệu tỷ đồng đang mắc kẹt",
+                "source": "tienphong",
+                "published_at": "2026-09-01 08:00:00",
+                "texts": ["Hơn 5.000 dự án với tổng vốn 3,5 triệu tỷ đồng."],
+            },
         ]
+        grounded = rag.GroundedAnswer("Tổng tài trợ cho 11 công trình là bao nhiêu?", articles[:1])
+        shown = grounded.feed("Tổng tài trợ là gần 3 tỷ đồng. Dự án còn nhận 7 tỷ đồng khác. ")
+        shown += grounded.finish()
+        self.assertIn("gần 3 tỷ đồng [Nguồn 1].", shown)
+        self.assertNotIn("7 tỷ", shown)
+        self.assertIn("Đã lược 1 câu", shown)
 
-    def test_financial_evidence_accepts_any_topic(self):
-        question = "Ngân sách xây cao tốc Bắc Nam là bao nhiêu?"
-        self.assertTrue(rag.asks_for_financial_amount(question))
-        articles = self._expressway_article("Ngân sách cho cao tốc Bắc Nam là 120.000 tỷ đồng.")
-        self.assertTrue(rag.has_financial_evidence(question, articles))
+    def test_citations_are_added_and_corrected(self):
+        articles = [
+            {"title": "Harry Kane đoạt Quả Bóng Vàng 2026", "texts": ["Harry Kane đoạt Quả Bóng Vàng 2026 ở tuổi 33."]},
+            {"title": "Siêu máy tính dự đoán Quả Bóng Vàng", "texts": ["Siêu máy tính dự đoán Yamal thắng."]},
+        ]
+        grounded = rag.GroundedAnswer("Ai đoạt Quả Bóng Vàng 2026?", articles)
+        shown = grounded.feed("Harry Kane đoạt Quả Bóng Vàng ở tuổi 33 [Nguồn 2]. ") + grounded.finish()
+        self.assertIn("[Nguồn 1]", shown)
+        self.assertNotIn("[Nguồn 2]", shown)
 
-    def test_financial_evidence_rejects_unrelated_or_non_finance_sentences(self):
-        question = "Ngân sách xây cao tốc Bắc Nam là bao nhiêu?"
-        no_finance_word = self._expressway_article("Tuyến dài 1.000 km, đã thu 50 tỷ đồng phí.")
-        other_topic = self._expressway_article("Ngân sách cho bệnh viện là 20 tỷ đồng.")
-        self.assertFalse(rag.has_financial_evidence(question, no_finance_word))
-        self.assertFalse(rag.has_financial_evidence(question, other_topic))
-
+    def test_sources_are_ordered_newest_first(self):
+        ordered = rag.order_by_date([
+            {"title": "cũ", "published_at": "2026-09-23 12:00:00"},
+            {"title": "mới", "published_at": "2026-10-27 11:07:00"},
+        ])
+        self.assertEqual([a["title"] for a in ordered], ["mới", "cũ"])
 
 class TestQuestionRoutingAndAccentMatching(unittest.TestCase):
     def _routed_intent(self, question: str, classifier_intent: str) -> str:
@@ -519,7 +536,7 @@ class TestQuestionRoutingAndAccentMatching(unittest.TestCase):
             "article_id": "gift-1",
             "title": "Món quà tháng 10 cho những người mẹ ở Gia Lai",
             "sapo": "",
-            "body": "Người dân lo lắng. Giá xăng cao. Quà tặng cho mẹ.",
+            "body": "Người dân Gia Lai lo lắng về xăng. Quà tặng cho mẹ.",
             "source": "tuoitre",
             "category": "news",
             "url": "https://tuoitre.vn/gift-1.html",
