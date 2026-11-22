@@ -61,3 +61,4 @@ data/text_classifier.joblib
 
 # Generated evaluation reports (rebuild with: python evaluate_all_models.py)
 reports/
+data/keyword_stats.json.gz

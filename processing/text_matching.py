@@ -44,14 +44,28 @@ def needs_exact_accents(keyword: str) -> bool:
     return fold_text(lowered) != lowered and is_vietnamese_syllable(lowered)
 
 
-def matched_keywords(keywords: list[str], text: str) -> set[str]:
-    """Return the keywords (lowercased) that occur in ``text`` as whole words, accent-aware."""
+def matched_keywords(keywords: list[str], text: str, exact: bool | None = None) -> set[str]:
+    """Return the keywords (lowercased) that occur in ``text`` as whole words, accent-aware.
+
+    Multi-word keywords ("vệ sinh") must appear as a phrase. ``exact`` says whether
+    the user's message was typed with accents: then every word, including ones
+    without accent marks such as "sau", must match exactly. When it is None each
+    keyword decides for itself (accented Vietnamese words exact, others loose).
+    """
     accented_words = {tok for tok in _WORD.findall(accented_lower(text)) if len(tok) > 1}
     folded_words = {fold_text(tok) for tok in accented_words}
     matched: set[str] = set()
     for keyword in keywords:
-        lowered = accented_lower(keyword)
-        if needs_exact_accents(lowered):
+        lowered = accented_lower(keyword).replace("_", " ")
+        parts = _WORD.findall(lowered)
+        if len(parts) > 1:
+            if contains_phrase(parts, text):
+                matched.add(lowered)
+            continue
+        keep_accents = needs_exact_accents(lowered) if exact is None else (
+            exact and is_vietnamese_syllable(lowered)
+        )
+        if keep_accents:
             if lowered in accented_words:
                 matched.add(lowered)
         elif fold_text(lowered) in folded_words:

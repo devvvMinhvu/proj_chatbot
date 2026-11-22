@@ -25,3 +25,18 @@ PHOBERT_MODEL_DIR = MODELS_DIR / "phobert"
 VIT5_MODEL_DIR = MODELS_DIR / "vit5_summarization"
 
 DEFAULT_LLM_MODEL = "qwen2.5:1.5b"
+
+#: Display labels for the database's publisher and category values. The turn
+#: parser recognises a publisher or category by its value or its label.
+SOURCE_DISPLAY = {
+    "vnexpress": "VnExpress",
+    "tuoitre": "Tuổi Trẻ",
+    "tienphong": "Tiền Phong",
+}
+CATEGORY_DISPLAY = {
+    "news": "Thời sự",
+    "economy": "Kinh tế",
+    "tech": "Công nghệ",
+    "entertainment": "Giải trí",
+    "sports": "Thể thao",
+}
