@@ -51,7 +51,15 @@ Hệ thống hỏi đáp, tìm kiếm kết hợp (SQLite FTS5 + PhoBERT/FAISS),
    ```bash
    python -m nlp.train_intent_classifier
    python -m nlp.train_text_classifier
+   python -m nlp.train_phobert_classifier
    ```
+   `nlp.train_phobert_classifier` tinh chỉnh PhoBERT để phân loại chủ đề bài báo, dùng cùng
+   tập kiểm thử với mô hình TF-IDF (chia 80/20, `random_state=42`) và báo cáo Accuracy,
+   Macro-F1, F1 từng chủ đề, ma trận nhầm lẫn và kiểm định McNemar giữa hai mô hình
+   (`reports/topic_classifier/<lần chạy>/summary.md`). Mô hình lưu ở
+   `models/phobert_topic_classifier/`; khi có mô hình này, `predict_category` dùng PhoBERT,
+   nếu không thì dùng TF-IDF. Mặc định đã tính cho GPU 4 GB (đóng băng bảng embedding,
+   gradient checkpointing); GPU lớn hơn có thể dùng `--no-freeze-embeddings --batch-size 16`.
 
 5. **Kiểm thử & Đánh giá**
    ```bash
