@@ -10,17 +10,34 @@ import unittest
 from datetime import datetime
 from unittest.mock import patch
 
-# Mock costly project dependencies before importing the handler.
+from nlp import intent_handler as handler
+
+# Stand-in for the costly RAG pipeline (FAISS, Ollama) while this module's tests run.
+# It is installed per module and removed afterwards, so other test modules keep the
+# real pipeline.
 rag_pkg = types.ModuleType("rag")
 rag_pkg.__path__ = []
 rag_module = types.ModuleType("rag.pipeline")
 rag_module.ask = lambda question: {"answer": "mock answer", "sources": []}
 rag_module.retrieve = lambda question, **kwargs: []
 rag_module.group_chunks_by_article = lambda chunks: []
-sys.modules["rag"] = rag_pkg
-sys.modules["rag.pipeline"] = rag_module
+rag_module.order_by_date = lambda articles: list(articles)
+_saved_modules: dict = {}
 
-from nlp import intent_handler as handler  # noqa: E402
+
+def setUpModule():
+    for name in ("rag", "rag.pipeline"):
+        _saved_modules[name] = sys.modules.get(name)
+    sys.modules["rag"] = rag_pkg
+    sys.modules["rag.pipeline"] = rag_module
+
+
+def tearDownModule():
+    for name, module in _saved_modules.items():
+        if module is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = module
 
 
 class TestTopicSearch(unittest.TestCase):
@@ -84,7 +101,7 @@ class TestTopicSearch(unittest.TestCase):
                 "Liệt kê bài báo thuộc chuyên mục kinh tế"
             )
 
-        mock_search.assert_called_once_with("Kinh tế", limit=10)
+        mock_search.assert_called_once_with("economy", limit=10)
         mock_ask.assert_not_called()
         self.assertIn("Kinh tế", answer)
         self.assertEqual(sources, self.articles)
@@ -117,7 +134,7 @@ class TestTopicSearch(unittest.TestCase):
                 "Liệt kê bài báo thuộc chuyên mục kinh tế"
             )
 
-        mock_search.assert_called_once_with("Kinh tế", limit=10)
+        mock_search.assert_called_once_with("economy", limit=10)
         mock_ask.assert_not_called()
         self.assertIn("Bài báo thuộc chuyên mục", answer)
         self.assertEqual(sources, self.articles)
@@ -202,7 +219,7 @@ class TestLatestTopicSearch(unittest.TestCase):
                 "Tìm bài báo về Quốc hội mới nhất"
             )
 
-        mock_search.assert_called_once_with(["quốc", "hội"], limit=10)
+        mock_search.assert_called_once_with(["quốc hội"], limit=10)
         self.assertIn("quốc hội", answer.lower())
         self.assertEqual(sources, [])
 

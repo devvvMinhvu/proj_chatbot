@@ -13,8 +13,19 @@ from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
 from config import VIT5_MODEL_DIR
 from processing.chunking import split_text
+from processing.sentences import clean_generated_text
 
+#: Only the first chunks (400 words each, see processing.chunking) are summarized.
 MAX_SUMMARY_CHUNKS = 2
+#: ViT5 input length per chunk, in tokens; longer chunks are truncated.
+MAX_INPUT_TOKENS = 512
+#: Generation settings shared by the app and the benchmark's ``vit5_app`` system.
+GENERATION_KWARGS: dict[str, Any] = {
+    "max_new_tokens": 110,
+    "min_new_tokens": 20,
+    "num_beams": 2,
+    "early_stopping": True,
+}
 _SUMMARY_CACHE_MAX_ENTRIES = 128
 _SUMMARY_CACHE: OrderedDict[str, str] = OrderedDict()
 _SUMMARY_CACHE_LOCK = threading.Lock()
@@ -66,24 +77,18 @@ def summarize_chunks_batch(chunks: list[str]) -> list[str]:
         batch_texts,
         padding=True,
         truncation=True,
-        max_length=512,
+        max_length=MAX_INPUT_TOKENS,
         return_tensors="pt",
     )
     inputs = {key: value.to(device) for key, value in inputs.items()}
 
     with torch.inference_mode():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=110,
-            min_new_tokens=20,
-            num_beams=2,
-            early_stopping=True,
-        )
+        outputs = model.generate(**inputs, **GENERATION_KWARGS)
 
     decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
     results = [""] * len(chunks)
     for (pos, _), summary in zip(cleaned_positions, decoded):
-        results[pos] = summary.strip()
+        results[pos] = clean_generated_text(summary)
     return results
 
 

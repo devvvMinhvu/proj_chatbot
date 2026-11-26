@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, time
 import re
 from typing import Any, Callable
 
-from sqlalchemy import or_, text
+from sqlalchemy import func, or_, text
 
 from database.db import Article, SessionLocal, ensure_db_initialized
 
@@ -91,16 +91,29 @@ def get_latest_articles(
     limit: int = 10,
     source: str | None = None,
     category: str | None = None,
+    published_from: date | None = None,
+    published_to: date | None = None,
+    exclude_sources: tuple[str, ...] | list[str] = (),
 ) -> tuple[list[dict[str, Any]], int, int]:
-    """Return latest dated articles ordered by published_at DESC along with coverage counts."""
+    """Return latest dated articles ordered by published_at DESC along with coverage counts.
+
+    ``published_from`` / ``published_to`` (inclusive dates) limit the publication date;
+    ``exclude_sources`` leaves those publishers out.
+    """
     ensure_db_initialized()
     db = SessionLocal()
     try:
         query = db.query(Article)
         if source:
             query = query.filter(Article.source == source)
+        if exclude_sources:
+            query = query.filter(Article.source.notin_(list(exclude_sources)))
         if category:
             query = query.filter(Article.category == category)
+        if published_from is not None:
+            query = query.filter(Article.published_at >= datetime.combine(published_from, time.min))
+        if published_to is not None:
+            query = query.filter(Article.published_at <= datetime.combine(published_to, time.max))
 
         total_count = query.count()
         dated_query = query.filter(Article.published_at.isnot(None))
@@ -112,6 +125,37 @@ def get_latest_articles(
         db.close()
 
 
+def get_archive_date_range() -> tuple[date | None, date | None]:
+    """Oldest and newest publication dates in the database."""
+    ensure_db_initialized()
+    db = SessionLocal()
+    try:
+        oldest, newest = db.query(func.min(Article.published_at), func.max(Article.published_at)).one()
+        return (oldest.date() if oldest else None), (newest.date() if newest else None)
+    finally:
+        db.close()
+
+
+def _exclusion_filters(exclude_sources, params: dict[str, Any]) -> list[str]:
+    """SQL conditions leaving out publishers; their names are bound as parameters."""
+    names = []
+    for index, value in enumerate(exclude_sources or ()):
+        params[f"exclude_source_{index}"] = value
+        names.append(f":exclude_source_{index}")
+    return [f"a.source NOT IN ({', '.join(names)})"] if names else []
+
+
+def _date_filters(published_from: date | None, published_to: date | None, params: dict[str, Any]) -> list[str]:
+    filters = []
+    if published_from is not None:
+        params["published_from"] = datetime.combine(published_from, time.min).isoformat(sep=" ")
+        filters.append("a.published_at >= :published_from")
+    if published_to is not None:
+        params["published_to"] = datetime.combine(published_to, time.max).isoformat(sep=" ")
+        filters.append("a.published_at <= :published_to")
+    return filters
+
+
 def search_fts_articles(
     terms: list[str],
     limit: int = 20,
@@ -119,6 +163,7 @@ def search_fts_articles(
     category: str | None = None,
     sort_by_date: bool = False,
     include_body: bool = True,
+    exclude_sources: tuple[str, ...] | list[str] = (),
 ) -> list[dict[str, Any]]:
     """Search articles via SQLite FTS5 with phrase priority and BM25 ranking."""
     tokens = _sanitize_fts_tokens(terms)
@@ -136,6 +181,7 @@ def search_fts_articles(
         if category:
             filters.append("a.category = :category")
             base_params["category"] = category
+        filters.extend(_exclusion_filters(exclude_sources, base_params))
 
         where_clause = " AND ".join(filters)
         if sort_by_date:
@@ -245,8 +291,15 @@ def search_latest_topic_articles(
     category: str | None = None,
     session_factory: Any = SessionLocal,
     article_model: Any = Article,
+    published_from: date | None = None,
+    published_to: date | None = None,
+    exclude_sources: tuple[str, ...] | list[str] = (),
 ) -> tuple[list[dict[str, Any]], int, int]:
-    """Find articles matching topic terms ordered by published_at DESC, preferring contiguous phrases."""
+    """Find articles matching topic terms ordered by published_at DESC, preferring contiguous phrases.
+
+    The date range and the excluded publishers are applied in the query, so a
+    dated request is not limited to the newest matches.
+    """
     if not terms:
         return [], 0, 0
 
@@ -268,6 +321,8 @@ def search_latest_topic_articles(
             if category:
                 filters.append("a.category = :category")
                 params["category"] = category
+            filters.extend(_exclusion_filters(exclude_sources, params))
+            filters.extend(_date_filters(published_from, published_to, params))
 
             where_clause = " AND ".join(filters)
             total_phrase = (
@@ -327,6 +382,16 @@ def search_latest_topic_articles(
             base_query = base_query.filter(article_model.source == source)
         if category and hasattr(article_model, "category"):
             base_query = base_query.filter(article_model.category == category)
+        if exclude_sources and hasattr(article_model, "source"):
+            base_query = base_query.filter(article_model.source.notin_(list(exclude_sources)))
+        if published_from is not None:
+            base_query = base_query.filter(
+                article_model.published_at >= datetime.combine(published_from, time.min)
+            )
+        if published_to is not None:
+            base_query = base_query.filter(
+                article_model.published_at <= datetime.combine(published_to, time.max)
+            )
 
         active_query = None
         if len(terms) >= 2:
@@ -354,6 +419,7 @@ def search_topic_articles(
     source: str | None = None,
     session_factory: Any = SessionLocal,
     article_model: Any = Article,
+    exclude_sources: tuple[str, ...] | list[str] = (),
 ) -> tuple[list[dict[str, Any]], int, bool, list[str]]:
     """Filter articles by SQLite category column ordered by published_at DESC."""
     if session_factory is SessionLocal:
@@ -378,6 +444,8 @@ def search_topic_articles(
         query = db.query(article_model).filter(article_model.category.in_(matched_categories))
         if source and hasattr(article_model, "source"):
             query = query.filter(article_model.source == source)
+        if exclude_sources and hasattr(article_model, "source"):
+            query = query.filter(article_model.source.notin_(list(exclude_sources)))
 
         total_count = query.count()
         rows = query.order_by(article_model.published_at.desc()).limit(limit).all()

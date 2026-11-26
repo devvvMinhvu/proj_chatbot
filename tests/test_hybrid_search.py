@@ -176,7 +176,7 @@ class TestHybridSearchAndEdgeCases(unittest.TestCase):
             "article_id": "art-2",
             "title": "Bài thứ hai",
             "sapo": "Tóm tắt sapo",
-            "body": "Nội dung đầy đủ của bài báo thứ hai.",
+            "body": "Bản tóm tắt ngắn gọn. Nội dung đầy đủ của bài báo thứ hai.",
             "source": "tuoitre",
             "category": "economy",
             "published_at_display": "27/10/2026 09:00",
@@ -214,7 +214,7 @@ class TestHybridSearchAndEdgeCases(unittest.TestCase):
             "article_id": "art-active",
             "title": "Bài đang xem",
             "sapo": "Sapo bài đang xem",
-            "body": "Nội dung đầy đủ bài đang xem.",
+            "body": "Tóm tắt bài đang xem. Nội dung đầy đủ bài đang xem.",
             "source": "tuoitre",
         }
         with patch.object(handler, "predict_intent", return_value="summarization"), patch.object(
@@ -258,7 +258,7 @@ class TestHybridSearchAndEdgeCases(unittest.TestCase):
         fake_2 = {
             "article_id": "art-2",
             "title": "Bài 2",
-            "body": "Toàn văn bài hai.",
+            "body": "Tóm tắt bài hai. Toàn văn bài hai.",
             "source": "vnexpress",
         }
         with patch.object(handler, "predict_intent", return_value="summarization"), patch.object(
@@ -367,8 +367,190 @@ class TestHybridSearchAndEdgeCases(unittest.TestCase):
         with patch.object(rag.ollama, "chat", side_effect=ConnectionError("Ollama offline")):
             output = "".join(rag.stream_answer("VN-Index tăng bao nhiêu?", fake_articles))
 
-        self.assertIn("Thị trường chứng khoán hồi phục", output)
-        self.assertIn("VN-Index tăng 15 điểm", output)
+        # The passage that answers is quoted with its citation.
+        self.assertIn("Ollama", output)
+        self.assertIn("> VN-Index tăng 15 điểm trong phiên sáng. [Nguồn 1]", output)
+
+
+class TestDenseFilterAndFinanceEvidence(unittest.TestCase):
+    SWIFT_PAYMENTS = {
+        "article_id": "art-1",
+        "chunk_id": 0,
+        "title": "Hệ thống thanh toán quốc tế Swift cập nhật mới",
+        "sapo": "Ngân hàng áp dụng chuẩn mới",
+        "source": "vnexpress",
+        "category": "economy",
+        "url": "https://vnexpress.net/swift-1.html",
+        "text": "Giao dịch qua Swift đạt kỷ lục trong quý này.",
+    }
+
+    def test_entity_terms_detects_names_in_any_case(self):
+        self.assertEqual(rag.entity_terms("Tìm bài nhắc đến Mbappé"), {"mbappe"})
+        self.assertEqual(rag.entity_terms("tìm bài về taylor swift"), {"taylor", "swift"})
+        self.assertEqual(rag.entity_terms("Mưa lớn tại Nghệ An"), {"nghe", "an"})
+        self.assertEqual(rag.entity_terms("giá xăng tăng mạnh"), set())
+        self.assertEqual(rag.entity_terms("Tin kinh tế trên VnExpress"), set())
+
+    def test_lowercase_unknown_entity_still_returns_nothing(self):
+        with patch.object(rag, "search_fts_articles", return_value=[]), patch.object(
+            rag, "search_vectors", return_value=([0.9], [0], [self.SWIFT_PAYMENTS])
+        ):
+            results = rag.retrieve("tìm bài về taylor swift", candidate_k=10, top_k=5)
+
+        self.assertEqual(results, [])
+
+    def test_paraphrased_dense_hit_is_kept_but_ranked_below_lexical_match(self):
+        paraphrase = {
+            "article_id": "para-1",
+            "chunk_id": 0,
+            "title": "Hộ kinh doanh chật vật khi nhiên liệu đắt đỏ",
+            "sapo": "",
+            "source": "tuoitre",
+            "category": "economy",
+            "url": "https://tuoitre.vn/para-1.html",
+            "text": "Nhiều hộ kinh doanh phải cắt giảm chi tiêu vì nhiên liệu đắt đỏ.",
+        }
+        lexical = {
+            "article_id": "lex-1",
+            "chunk_id": 0,
+            "title": "Giá xăng tăng lần thứ ba liên tiếp",
+            "sapo": "",
+            "source": "vnexpress",
+            "category": "economy",
+            "url": "https://vnexpress.net/lex-1.html",
+            "text": "Người dân lo lắng khi giá xăng tăng.",
+        }
+        with patch.object(rag, "search_fts_articles", return_value=[]), patch.object(
+            rag, "search_vectors", return_value=([0.79, 0.78], [0, 1], [paraphrase, lexical])
+        ):
+            results = rag.retrieve("người dân lo lắng vì giá xăng tăng", candidate_k=10, top_k=5)
+
+        self.assertEqual([r["article_id"] for r in results], ["lex-1", "para-1"])
+
+    def test_answer_sentences_with_unsupported_numbers_are_held_back(self):
+        articles = [
+            {
+                "title": "Khánh thành cụm 11 công trình vệ sinh đạt chuẩn ở Sơn La",
+                "source": "vnexpress",
+                "published_at": "2026-10-24 08:00:00",
+                "texts": ["Quỹ Hy vọng bàn giao 11 công trình tại 6 xã, tổng tài trợ gần 3 tỷ đồng."],
+            },
+            {
+                "title": "Hơn 5.000 dự án với tổng vốn 3,5 triệu tỷ đồng đang mắc kẹt",
+                "source": "tienphong",
+                "published_at": "2026-09-01 08:00:00",
+                "texts": ["Hơn 5.000 dự án với tổng vốn 3,5 triệu tỷ đồng."],
+            },
+        ]
+        grounded = rag.GroundedAnswer("Tổng tài trợ cho 11 công trình là bao nhiêu?", articles[:1])
+        shown = grounded.feed("Tổng tài trợ là gần 3 tỷ đồng. Dự án còn nhận 7 tỷ đồng khác. ")
+        shown += grounded.finish()
+        self.assertIn("gần 3 tỷ đồng [Nguồn 1].", shown)
+        self.assertNotIn("7 tỷ", shown)
+        self.assertIn("Đã lược 1 câu", shown)
+
+    def test_citations_are_added_and_corrected(self):
+        articles = [
+            {"title": "Harry Kane đoạt Quả Bóng Vàng 2026", "texts": ["Harry Kane đoạt Quả Bóng Vàng 2026 ở tuổi 33."]},
+            {"title": "Siêu máy tính dự đoán Quả Bóng Vàng", "texts": ["Siêu máy tính dự đoán Yamal thắng."]},
+        ]
+        grounded = rag.GroundedAnswer("Ai đoạt Quả Bóng Vàng 2026?", articles)
+        shown = grounded.feed("Harry Kane đoạt Quả Bóng Vàng ở tuổi 33 [Nguồn 2]. ") + grounded.finish()
+        self.assertIn("[Nguồn 1]", shown)
+        self.assertNotIn("[Nguồn 2]", shown)
+
+    def test_sources_are_ordered_newest_first(self):
+        ordered = rag.order_by_date([
+            {"title": "cũ", "published_at": "2026-09-23 12:00:00"},
+            {"title": "mới", "published_at": "2026-10-27 11:07:00"},
+        ])
+        self.assertEqual([a["title"] for a in ordered], ["mới", "cũ"])
+
+class TestQuestionRoutingAndAccentMatching(unittest.TestCase):
+    def _routed_intent(self, question: str, classifier_intent: str) -> str:
+        seen: list[str] = []
+        with patch.object(handler, "predict_intent", return_value=classifier_intent), patch.object(
+            handler, "retrieve", return_value=[]
+        ), patch("builtins.print", side_effect=lambda *a, **k: seen.append(" ".join(map(str, a)))):
+            handler._execute_turn_plan(question)
+        line = next(item for item in seen if item.startswith("[INTENT]"))
+        return line.split()[1]
+
+    def test_question_words_route_to_question_answering(self):
+        cases = {
+            "Người dân lo lắng thế nào khi giá xăng tăng?": "latest_topic_search",
+            "Vì sao giá vàng tăng mạnh": "semantic_search",
+            "Ai là người giành Quả Bóng Vàng 2026?": "semantic_search",
+        }
+        for question, classifier_intent in cases.items():
+            with self.subTest(question=question):
+                self.assertEqual(self._routed_intent(question, classifier_intent), "question_answering")
+
+    def test_search_and_browse_requests_are_not_turned_into_questions(self):
+        cases = {
+            "Tìm bài nhắc đến Mbappe?": ("semantic_search", "semantic_search"),
+            "Có nội dung nào về thị trường lao động?": ("semantic_search", "semantic_search"),
+            "Chuyên mục thể thao có gì?": ("topic_search", "topic_search"),
+            "Bạn là ai?": ("introduction", "introduction"),
+        }
+        for question, (classifier_intent, expected) in cases.items():
+            with self.subTest(question=question):
+                self.assertEqual(self._routed_intent(question, classifier_intent), expected)
+
+    def test_new_question_is_not_answered_from_unrelated_active_article(self):
+        fuel_article = {
+            "article_id": "fuel-1",
+            "title": "Châu Âu chạy đua ứng phó khủng hoảng giá xăng dầu",
+            "sapo": "Giá xăng dầu tăng vọt, châu Âu mạnh tay giảm thuế.",
+            "source": "vnexpress",
+            "url": "https://vnexpress.net/fuel-1.html",
+        }
+        fuel_content = {**fuel_article, "body": "Giá nhiên liệu tăng mạnh khiến người dân lo lắng."}
+        with patch.object(handler, "predict_intent", return_value="semantic_search"), patch.object(
+            handler, "get_article_content", return_value=fuel_content
+        ), patch.object(handler, "_handle_target_article") as mock_target, patch.object(
+            handler, "retrieve", return_value=[]
+        ):
+            handler._execute_turn_plan("Vì sao giá vàng tăng mạnh?", active_article=fuel_article)
+            mock_target.assert_not_called()
+
+            handler._execute_turn_plan("Giá xăng dầu tăng bao nhiêu?", active_article=fuel_article)
+            mock_target.assert_called_once()
+
+    def test_accented_keywords_need_matching_accents(self):
+        self.assertEqual(rag.matched_keywords(["giá", "xăng"], "Món quà cho mẹ ở Gia Lai"), set())
+        self.assertEqual(rag.matched_keywords(["tăng"], "Quà tặng cho phụ nữ"), set())
+        self.assertEqual(rag.matched_keywords(["giá"], "Giá xăng hôm nay"), {"giá"})
+        # Unaccented input and foreign names still match loosely.
+        self.assertEqual(rag.matched_keywords(["gia", "xang"], "Giá xăng tăng"), {"gia", "xang"})
+        self.assertEqual(rag.matched_keywords(["mbappé"], "Mbappe ghi bàn"), {"mbappé"})
+
+    def test_title_bonus_ignores_accent_collisions(self):
+        question = "Người dân lo lắng thế nào khi giá xăng tăng?"
+        gia_lai = {"title": "Món quà tháng 10 cho những người mẹ khó khăn miền núi Gia Lai"}
+        fuel = {"title": "Xăng tăng gần 5.000 đồng/lít, người dân lo giá hàng hóa"}
+        self.assertFalse(rag.has_title_overlap(question, gia_lai))
+        self.assertTrue(rag.has_title_overlap(question, fuel))
+
+    def test_fts_hit_matching_only_without_accents_is_demoted(self):
+        loose_hit = {
+            "article_id": "gift-1",
+            "title": "Món quà tháng 10 cho những người mẹ ở Gia Lai",
+            "sapo": "",
+            "body": "Người dân Gia Lai lo lắng về xăng. Quà tặng cho mẹ.",
+            "source": "tuoitre",
+            "category": "news",
+            "url": "https://tuoitre.vn/gift-1.html",
+            "similarity": 0.83,
+            "fts_tier": 1,
+        }
+        with patch.object(rag, "search_fts_articles", return_value=[loose_hit]), patch.object(
+            rag, "search_vectors", return_value=([], [], [])
+        ):
+            results = rag.retrieve("người dân lo lắng vì giá xăng tăng", candidate_k=10, top_k=5)
+
+        self.assertEqual(len(results), 1)
+        self.assertLessEqual(results[0]["similarity"], rag.FTS_LOOSE_MATCH_SCORE)
 
 
 if __name__ == "__main__":

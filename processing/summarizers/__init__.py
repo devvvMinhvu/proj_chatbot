@@ -4,7 +4,7 @@ Built-in names:
   lead          Lead-k baseline (first k sentences)
   textrank      TextRank (Mihalcea & Tarau, 2004)
   phobert       PhoBERT centroid + MMR (BERT-based extractive)
-  vit5_app      The app's ViT5 pipeline (chunk, summarize, concatenate)
+  vit5_app      The app's ViT5 pipeline (first 2 chunks, summarize, join)
   vit5          ViT5 single pass over the first 1024 tokens
   mt5_xlsum     mT5-base fine-tuned on XL-Sum (T5 family; Hub model, must be downloaded)
 

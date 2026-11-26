@@ -7,7 +7,7 @@ Hệ thống hỏi đáp, tìm kiếm kết hợp (SQLite FTS5 + PhoBERT/FAISS),
 - `config/`: Đường dẫn tập trung và cấu hình hệ thống (`DATA_DIR`, `NEWS_JSONL_PATH`, `NEWS_DB_PATH`, `VECTOR_DB_DIR`, `PIPER_MODELS_DIR`, đường dẫn các mô hình).
 - `crawler/`: Thu thập và hậu xử lý bài báo tiếng Việt từ VnExpress, Tuổi Trẻ và Tiền Phong (`config.py`, `http_client.py`, `extractor.py`, `sources.py`, `pipeline.py`, `process.py`, `postprocess.py`).
 - `database/`: Mô hình SQLAlchemy + FTS5 (`db.py`), truy vấn bài báo/chuyên mục/tìm kiếm toàn văn (`repository.py`) và nhập JSONL vào SQLite (`import_jsonl.py`).
-- `processing/`: Chia đoạn văn bản (`chunking.py`), tách câu tiếng Việt (`sentences.py`), tóm tắt bài báo bằng ViT5 cho ứng dụng (`summarizer.py`) và các hệ thống tóm tắt dùng để so sánh (`summarizers/`: Lead-k, TextRank, PhoBERT centroid + MMR, ViT5, mT5).
+- `processing/`: Chia đoạn văn bản (`chunking.py`), tách câu tiếng Việt (`sentences.py`), so khớp từ khóa có phân biệt dấu (`text_matching.py`), tóm tắt bài báo bằng ViT5 cho ứng dụng (`summarizer.py`) và các hệ thống tóm tắt dùng để so sánh (`summarizers/`: Lead-k, TextRank, PhoBERT centroid + MMR, ViT5, mT5).
 - `evaluation/`: Độ đo ROUGE/BLEU tiếng Việt (`metrics.py`), nạp dữ liệu đánh giá (`datasets.py`) và benchmark so sánh mô hình tóm tắt (`summarization_benchmark.py`).
 - `nlp/`:
   - `semantic_search.py`: Sinh vector embedding PhoBERT (lazy-load).
@@ -38,16 +38,28 @@ Hệ thống hỏi đáp, tìm kiếm kết hợp (SQLite FTS5 + PhoBERT/FAISS),
    python -m database.import_jsonl
    ```
 
-3. **Xây dựng Vector Database (FAISS + PhoBERT)**
+3. **Xây dựng Vector Database (FAISS + PhoBERT) và thống kê từ khóa**
    ```bash
    python -m nlp.vector_store
+   python -m nlp.keyword_stats
    ```
+   `nlp.keyword_stats` tách từ toàn bộ bài báo (pyvi, khoảng 3–4 phút) để học hư từ và
+   từ lệnh dùng khi đọc câu hỏi; kết quả lưu ở `data/keyword_stats.json.gz`. Nếu bỏ qua
+   bước này, ứng dụng sẽ tự tạo ở câu hỏi đầu tiên.
 
 4. **Huấn luyện các bộ phân loại**
    ```bash
    python -m nlp.train_intent_classifier
    python -m nlp.train_text_classifier
+   python -m nlp.train_phobert_classifier
    ```
+   `nlp.train_phobert_classifier` tinh chỉnh PhoBERT để phân loại chủ đề bài báo, dùng cùng
+   tập kiểm thử với mô hình TF-IDF (chia 80/20, `random_state=42`) và báo cáo Accuracy,
+   Macro-F1, F1 từng chủ đề, ma trận nhầm lẫn và kiểm định McNemar giữa hai mô hình
+   (`reports/topic_classifier/<lần chạy>/summary.md`). Mô hình lưu ở
+   `models/phobert_topic_classifier/`; khi có mô hình này, `predict_category` dùng PhoBERT,
+   nếu không thì dùng TF-IDF. Mặc định đã tính cho GPU 4 GB (đóng băng bảng embedding,
+   gradient checkpointing); GPU lớn hơn có thể dùng `--no-freeze-embeddings --batch-size 16`.
 
 5. **Kiểm thử & Đánh giá**
    ```bash
@@ -60,7 +72,8 @@ Hệ thống hỏi đáp, tìm kiếm kết hợp (SQLite FTS5 + PhoBERT/FAISS),
    python -m evaluation.summarization_benchmark --limit 200 --length-budget 40
    ```
    - Hệ thống (`--systems`): `lead` (Lead-k), `textrank`, `phobert` (PhoBERT centroid + MMR),
-     `vit5_app` (đúng pipeline ViT5 của ứng dụng: chia đoạn 400 từ rồi ghép tóm tắt),
+     `vit5_app` (đúng pipeline ViT5 của ứng dụng: chia đoạn 400 từ, tóm tắt 2 đoạn đầu rồi ghép;
+     cấu hình đọc trực tiếp từ `processing/summarizer.py`),
      `vit5` (ViT5 một lượt, 1024 token đầu), `mt5_xlsum` (mT5 XL-Sum, cần tải trước từ
      Hugging Face) hoặc `seq2seq:<đường dẫn/ID mô hình>` cho mô hình khác (ví dụ BARTpho).
    - Dữ liệu mặc định là `data/news.jsonl`, dùng sapo làm bản tóm tắt tham chiếu. Thân bài
